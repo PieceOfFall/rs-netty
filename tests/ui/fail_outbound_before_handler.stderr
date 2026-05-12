@@ -1,0 +1,7 @@
+error[E0599]: no method named `outbound` found for struct `PipelineBuilder<InboundPhase, LineCodec, Identity, Identity, Missing, Identity, String, (), ()>` in the current scope
+  --> tests/ui/fail_outbound_before_handler.rs:18:48
+   |
+18 |     let _ = pipeline().codec(LineCodec::new()).outbound(Render);
+   |             ----------                         ^^^^^^^^ private field, not a method
+   |             |
+   |             method `outbound` is available on `PipelineBuilder<rs_netty::pipeline::state::Start, Missing, Identity, Identity, Missing, Identity, (), (), ()>`

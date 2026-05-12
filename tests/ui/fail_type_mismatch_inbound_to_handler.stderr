@@ -1,0 +1,23 @@
+error[E0277]: the trait bound `EchoString: Handler<Request>` is not satisfied
+  --> tests/ui/fail_type_mismatch_inbound_to_handler.rs:33:18
+   |
+33 |         .handler(EchoString);
+   |          ------- ^^^^^^^^^^ unsatisfied trait bound
+   |          |
+   |          required by a bound introduced by this call
+   |
+help: the trait `Handler<Request>` is not implemented for `EchoString`
+      but trait `Handler<String>` is implemented for it
+  --> tests/ui/fail_type_mismatch_inbound_to_handler.rs:21:1
+   |
+21 | impl Handler<String> for EchoString {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `String`, found `Request`
+note: required by a bound in `PipelineBuilder::<InboundPhase, C, InP, Identity, Missing, Identity, CurrentIn, (), ()>::handler`
+  --> src/pipeline/builder.rs
+   |
+   |     pub fn handler<H>(
+   |            ------- required by a bound in this associated function
+...
+   |         H: Handler<CurrentIn>,
+   |            ^^^^^^^^^^^^^^^^^^ required by this bound in `PipelineBuilder::<InboundPhase, C, InP, Identity, Missing, Identity, CurrentIn, (), ()>::handler`

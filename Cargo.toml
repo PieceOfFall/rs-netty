@@ -1,0 +1,18 @@
+[package]
+name = "rs_netty"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+description = "A Tokio-native typed TCP pipeline framework inspired by Netty."
+repository = ""
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+bytes = "1"
+thiserror = "2"
+tracing = "0.1"
+trait-variant = "0.1"
+
+[dev-dependencies]
+trybuild = "1"

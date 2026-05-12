@@ -1,0 +1,23 @@
+error[E0277]: the trait bound `RenderOther: Outbound<Response>` is not satisfied
+  --> tests/ui/fail_type_mismatch_outbound.rs:34:19
+   |
+34 |         .outbound(RenderOther);
+   |          -------- ^^^^^^^^^^^ unsatisfied trait bound
+   |          |
+   |          required by a bound introduced by this call
+   |
+help: the trait `Outbound<Response>` is not implemented for `RenderOther`
+      but trait `Outbound<Other>` is implemented for it
+  --> tests/ui/fail_type_mismatch_outbound.rs:18:1
+   |
+18 | impl Outbound<Other> for RenderOther {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `Other`, found `Response`
+note: required by a bound in `PipelineBuilder::<rs_netty::pipeline::state::Ready, C, InP, BizP, H, OutP, CurrentIn, Write, CurrentOut>::outbound`
+  --> src/pipeline/builder.rs
+   |
+   |     pub fn outbound<O>(
+   |            -------- required by a bound in this associated function
+...
+   |         O: Outbound<CurrentOut>,
+   |            ^^^^^^^^^^^^^^^^^^^^ required by this bound in `PipelineBuilder::<Ready, C, InP, BizP, H, OutP, CurrentIn, Write, CurrentOut>::outbound`
