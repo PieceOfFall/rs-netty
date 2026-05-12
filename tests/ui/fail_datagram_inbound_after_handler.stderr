@@ -1,0 +1,15 @@
+error[E0599]: no method named `inbound` found for struct `DatagramPipelineBuilder<rs_netty::pipeline::state::Ready, Utf8DatagramCodec, Identity, Identity, Echo, Identity, String, String, String>` in the current scope
+  --> tests/ui/fail_datagram_inbound_after_handler.rs:34:10
+   |
+31 |       let _ = datagram_pipeline()
+   |               -------------------
+   |               |
+   |  _____________method `inbound` is available on `DatagramPipelineBuilder<rs_netty::pipeline::state::Start, rs_netty::pipeline::datagram::builder::Missing, Identity, Identity, rs_netty::pipeline::datagram::builder::Missing, Identity, (), (), ()>`
+   | |
+32 | |         .codec(Utf8DatagramCodec)
+   | |          ------------------------ method `inbound` is available on `DatagramPipelineBuilder<InboundPhase, Utf8DatagramCodec, Identity, Identity, rs_netty::pipeline::datagram::builder::Missing, Identity, String, (), ()>`
+33 | |         .handler(Echo)
+34 | |         .inbound(Logging);
+   | |         -^^^^^^^ private field, not a method
+   | |_________|
+   |

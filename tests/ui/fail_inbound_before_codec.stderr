@@ -1,5 +1,0 @@
-error[E0599]: no method named `inbound` found for struct `PipelineBuilder<rs_netty::pipeline::state::Start, Missing, Identity, Identity, Missing, Identity, (), (), ()>` in the current scope
-  --> tests/ui/fail_inbound_before_codec.rs:18:24
-   |
-18 |     let _ = pipeline().inbound(Logging);
-   |                        ^^^^^^^ private field, not a method

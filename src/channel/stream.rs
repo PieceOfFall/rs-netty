@@ -2,18 +2,13 @@ use std::net::SocketAddr;
 
 use tokio::sync::mpsc;
 
-use crate::{Error, Result};
-
-pub(crate) enum Command<W> {
-    Write(W),
-    Close,
-}
+use crate::{channel::command::StreamCommand, Error, Result};
 
 pub struct Channel<W> {
     id: u64,
     peer_addr: SocketAddr,
     local_addr: SocketAddr,
-    tx: mpsc::Sender<Command<W>>,
+    tx: mpsc::Sender<StreamCommand<W>>,
 }
 
 impl<W> Clone for Channel<W> {
@@ -32,7 +27,7 @@ impl<W: Send + 'static> Channel<W> {
         id: u64,
         peer_addr: SocketAddr,
         local_addr: SocketAddr,
-        tx: mpsc::Sender<Command<W>>,
+        tx: mpsc::Sender<StreamCommand<W>>,
     ) -> Self {
         Self {
             id,
@@ -56,15 +51,15 @@ impl<W: Send + 'static> Channel<W> {
 
     pub async fn write(&self, msg: W) -> Result<()> {
         self.tx
-            .send(Command::Write(msg))
+            .send(StreamCommand::Write(msg))
             .await
-            .map_err(|_| Error::Closed)
+            .map_err(|_| Error::ChannelClosed)
     }
 
     pub async fn close(&self) -> Result<()> {
         self.tx
-            .send(Command::Close)
+            .send(StreamCommand::Close)
             .await
-            .map_err(|_| Error::Closed)
+            .map_err(|_| Error::ChannelClosed)
     }
 }

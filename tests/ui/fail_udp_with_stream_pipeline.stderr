@@ -1,0 +1,26 @@
+error[E0277]: the trait bound `PipelineBuilder<rs_netty::pipeline::state::Ready, LineCodec, Identity, Identity, Echo, Identity, String, String, String>: IntoDatagramPipeline` is not satisfied
+  --> tests/ui/fail_udp_with_stream_pipeline.rs:15:40
+   |
+15 |         UdpServer::bind("127.0.0.1:0").pipeline(|| pipeline().codec(LineCodec::new()).handler(Echo));
+   |                                        ^^^^^^^^ unsatisfied trait bound
+   |
+   = help: the trait `IntoDatagramPipeline` is not implemented for `PipelineBuilder<rs_netty::pipeline::state::Ready, LineCodec, Identity, Identity, Echo, Identity, String, String, String>`
+help: the trait `IntoDatagramPipeline` is implemented for `DatagramPipelineBuilder<rs_netty::pipeline::state::Ready, C, InP, BizP, H, OutP, CurrentIn, Write, CurrentOut>`
+  --> src/pipeline/datagram/builder.rs
+   |
+   | / impl<C, InP, BizP, H, OutP, CurrentIn, Write, CurrentOut> IntoDatagramPipeline
+   | |     for DatagramPipelineBuilder<Ready, C, InP, BizP, H, OutP, CurrentIn, Write, CurrentOut>
+   | | where
+   | |     C: DatagramDecoder + DatagramEncoder<CurrentOut>,
+...  |
+   | |     Write: Send + 'static,
+   | |     CurrentOut: Send + 'static,
+   | |_______________________________^
+note: required by a bound in `UdpServer::pipeline`
+  --> src/transport/udp/server.rs
+   |
+   |     pub fn pipeline<F, B, P>(self, factory: F) -> UdpServer<F>
+   |            -------- required by a bound in this associated function
+...
+   |         B: IntoDatagramPipeline<Pipeline = P>,
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `UdpServer::pipeline`

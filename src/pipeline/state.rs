@@ -1,4 +1,1 @@
-pub struct Start;
-pub struct InboundPhase;
-pub struct BusinessPhase;
-pub struct Ready;
+pub use crate::pipeline::core::state::*;

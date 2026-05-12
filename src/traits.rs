@@ -1,5 +1,5 @@
 use crate::{
-    context::{BusinessContext, Context, InboundContext, OutboundContext},
+    context::{BusinessContext, Context, DatagramContext, InboundContext, OutboundContext},
     Result,
 };
 
@@ -36,6 +36,13 @@ pub trait LocalHandler<I>: 'static {
     type Write: Send + 'static;
 
     async fn read(&mut self, ctx: &mut Context<Self::Write>, msg: I) -> Result<()>;
+}
+
+#[trait_variant::make(DatagramHandler: Send)]
+pub trait LocalDatagramHandler<I>: 'static {
+    type Write: Send + 'static;
+
+    async fn read(&mut self, ctx: &mut DatagramContext<Self::Write>, msg: I) -> Result<()>;
 }
 
 #[trait_variant::make(Outbound: Send)]

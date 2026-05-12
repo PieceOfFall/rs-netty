@@ -1,8 +1,8 @@
 # rs_netty
 
-rs_netty is a Tokio-native typed TCP pipeline framework inspired by Netty. It keeps the Channel / Pipeline / Handler mental model, but uses Rust ownership, async/await, Tokio tasks, bounded mpsc, and typed messages instead of EventLoop, ChannelFuture, Object messages, and reference-counted ByteBuf.
+rs_netty is a Tokio-native typed TCP/UDP pipeline framework inspired by Netty. It keeps the Channel / Pipeline / Handler mental model, but uses Rust ownership, async/await, Tokio tasks, bounded mpsc, and typed messages instead of EventLoop, ChannelFuture, Promise, Object messages, and reference-counted ByteBuf.
 
-## Echo
+## TCP Echo Server
 
 ```rust
 use rs_netty::{codec::LineCodec, pipeline, Context, Handler, Result, TcpServer};
@@ -26,78 +26,65 @@ impl Handler<String> for Echo {
 }
 ```
 
-Run it with:
-
-```bash
-cargo run --example echo
-```
-
-## Typed Chain
+## TCP Client
 
 ```rust
-use rs_netty::{
-    codec::LineCodec, pipeline, Context, Flow, Handler, Inbound, Outbound, Result, TcpServer,
-};
-
-struct Request(String);
-struct Response(String);
-
-struct Parse;
-
-impl Inbound<String> for Parse {
-    type Out = Request;
-
-    async fn read(
-        &mut self,
-        _ctx: &mut rs_netty::InboundContext,
-        msg: String,
-    ) -> Result<Flow<Self::Out>> {
-        Ok(Flow::Next(Request(msg)))
-    }
-}
-
-struct Router;
-
-impl Handler<Request> for Router {
-    type Write = Response;
-
-    async fn read(&mut self, ctx: &mut Context<Self::Write>, req: Request) -> Result<()> {
-        ctx.write(Response(format!("echo: {}", req.0))).await
-    }
-}
-
-struct Render;
-
-impl Outbound<Response> for Render {
-    type Out = String;
-
-    async fn write(
-        &mut self,
-        _ctx: &mut rs_netty::OutboundContext,
-        msg: Response,
-    ) -> Result<Flow<Self::Out>> {
-        Ok(Flow::Next(msg.0))
-    }
-}
+use rs_netty::{codec::LineCodec, pipeline, Context, Handler, Result, TcpClient};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    TcpServer::bind("127.0.0.1:9001")
-        .pipeline(|| {
-            pipeline()
-                .codec(LineCodec::new())
-                .inbound(Parse)
-                .handler(Router)
-                .outbound(Render)
-        })
+    let client = TcpClient::connect("127.0.0.1:9000")
+        .pipeline(|| pipeline().codec(LineCodec::new()).handler(PrintResponse))
+        .run()
+        .await?;
+
+    client.write("hello".to_string()).await?;
+    client.close().await?;
+    client.wait().await
+}
+
+struct PrintResponse;
+
+impl Handler<String> for PrintResponse {
+    type Write = String;
+
+    async fn read(&mut self, _ctx: &mut Context<Self::Write>, msg: String) -> Result<()> {
+        println!("server -> {msg}");
+        Ok(())
+    }
+}
+```
+
+## UDP Echo Server
+
+```rust
+use rs_netty::{
+    codec::Utf8DatagramCodec, datagram_pipeline, DatagramContext, DatagramHandler, Result,
+    UdpServer,
+};
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    UdpServer::bind("127.0.0.1:9002")
+        .pipeline(|| datagram_pipeline().codec(Utf8DatagramCodec).handler(UdpEcho))
         .run()
         .await
+}
+
+struct UdpEcho;
+
+impl DatagramHandler<String> for UdpEcho {
+    type Write = String;
+
+    async fn read(&mut self, ctx: &mut DatagramContext<Self::Write>, msg: String) -> Result<()> {
+        ctx.write(format!("echo: {msg}")).await
+    }
 }
 ```
 
 ## Compile-Time Constraints
 
-The builder is a type-state pipeline:
+TCP uses the stream pipeline:
 
 ```text
 pipeline()
@@ -108,17 +95,47 @@ pipeline()
   .outbound(...)*
 ```
 
-Methods only exist in valid states. Message transitions are checked with trait bounds, so a handler input must match the previous inbound output, outbound input must match `Handler::Write`, and the final outbound type must be encodable by the codec.
+UDP uses the datagram pipeline:
 
-`Context<W>::write` and `Channel<W>::write` only accept `W`, so response types are checked at compile time too.
+```text
+datagram_pipeline()
+  .codec(...)
+  .inbound(...)*
+  .business(...)*
+  .handler(...)
+  .outbound(...)*
+```
+
+Methods only exist in valid states. Message transitions are checked with trait bounds, so handler inputs must match previous stage outputs, outbound inputs must match `Handler::Write` or `DatagramHandler::Write`, and final outbound types must be encodable by the selected codec.
+
+`TcpServer` and `TcpClient` only accept stream pipelines. `UdpServer` and `UdpClient` only accept datagram pipelines.
+
+## UDP Semantics
+
+UDP support is datagram-oriented. `UdpServer` uses one socket-level pipeline and does not create per-peer child pipelines. If you need per-peer state, store it explicitly inside your handler, for example with `HashMap<SocketAddr, PeerState>`.
+
+`DatagramContext::write(msg)` replies to the current datagram peer. `DatagramContext::write_to(peer, msg)` and `DatagramChannel::write_to(peer, msg)` send to an explicit peer.
+
+## Examples
+
+```bash
+cargo run --example tcp_echo_server
+cargo run --example tcp_echo_client
+cargo run --example tcp_typed_chain
+cargo run --example udp_echo_server
+cargo run --example udp_echo_client
+cargo run --example udp_typed_chain
+```
 
 ## Non-Goals
 
-Non-goals for v0.1:
+Non-goals for v0.2:
 
 - No EventLoop API.
 - No ByteBuf refCnt API.
+- No ChannelFuture / Promise API.
 - No dynamic Box<dyn Handler> main path.
 - No TLS yet.
-- No UDP yet.
 - No codec registry yet.
+- No automatic UDP reliability / ordering / retransmission.
+- No per-peer UDP child pipeline yet.

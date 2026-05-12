@@ -1,0 +1,13 @@
+error[E0599]: no method named `outbound` found for struct `DatagramPipelineBuilder<InboundPhase, Utf8DatagramCodec, Identity, Identity, rs_netty::pipeline::datagram::builder::Missing, Identity, String, (), ()>` in the current scope
+  --> tests/ui/fail_datagram_outbound_before_handler.rs:20:10
+   |
+18 |       let _ = datagram_pipeline()
+   |               -------------------
+   |               |
+   |  _____________method `outbound` is available on `DatagramPipelineBuilder<rs_netty::pipeline::state::Start, rs_netty::pipeline::datagram::builder::Missing, Identity, Identity, rs_netty::pipeline::datagram::builder::Missing, Identity, (), (), ()>`
+   | |
+19 | |         .codec(Utf8DatagramCodec)
+20 | |         .outbound(Render);
+   | |         -^^^^^^^^ private field, not a method
+   | |_________|
+   |

@@ -1,8 +1,0 @@
-error[E0599]: no method named `inbound` found for struct `PipelineBuilder<rs_netty::pipeline::state::Ready, LineCodec, Identity, Identity, Echo, Identity, String, String, String>` in the current scope
-  --> tests/ui/fail_inbound_after_handler.rs:28:62
-   |
-28 |     let _ = pipeline().codec(LineCodec::new()).handler(Echo).inbound(Logging);
-   |             ---------- -----------------------               ^^^^^^^ private field, not a method
-   |             |          |
-   |             |          method `inbound` is available on `PipelineBuilder<InboundPhase, LineCodec, Identity, Identity, Missing, Identity, String, (), ()>`
-   |             method `inbound` is available on `PipelineBuilder<rs_netty::pipeline::state::Start, Missing, Identity, Identity, Missing, Identity, (), (), ()>`

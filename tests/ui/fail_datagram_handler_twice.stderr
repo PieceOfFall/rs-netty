@@ -1,0 +1,15 @@
+error[E0599]: no method named `handler` found for struct `DatagramPipelineBuilder<rs_netty::pipeline::state::Ready, Utf8DatagramCodec, Identity, Identity, Echo, Identity, String, String, String>` in the current scope
+  --> tests/ui/fail_datagram_handler_twice.rs:17:10
+   |
+14 |       let _ = datagram_pipeline()
+   |               -------------------
+   |               |
+   |  _____________method `handler` is available on `DatagramPipelineBuilder<rs_netty::pipeline::state::Start, rs_netty::pipeline::datagram::builder::Missing, Identity, Identity, rs_netty::pipeline::datagram::builder::Missing, Identity, (), (), ()>`
+   | |
+15 | |         .codec(Utf8DatagramCodec)
+   | |          ------------------------ method `handler` is available on `DatagramPipelineBuilder<InboundPhase, Utf8DatagramCodec, Identity, Identity, rs_netty::pipeline::datagram::builder::Missing, Identity, String, (), ()>`
+16 | |         .handler(Echo)
+17 | |         .handler(Echo);
+   | |         -^^^^^^^ private field, not a method
+   | |_________|
+   |

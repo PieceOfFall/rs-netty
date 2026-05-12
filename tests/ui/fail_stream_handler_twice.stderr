@@ -1,0 +1,8 @@
+error[E0599]: no method named `handler` found for struct `PipelineBuilder<rs_netty::pipeline::state::Ready, LineCodec, Identity, Identity, Echo, Identity, String, String, String>` in the current scope
+  --> tests/ui/fail_stream_handler_twice.rs:14:62
+   |
+14 |     let _ = pipeline().codec(LineCodec::new()).handler(Echo).handler(Echo);
+   |             ---------- -----------------------               ^^^^^^^ private field, not a method
+   |             |          |
+   |             |          method `handler` is available on `PipelineBuilder<InboundPhase, LineCodec, Identity, Identity, rs_netty::pipeline::builder::Missing, Identity, String, (), ()>`
+   |             method `handler` is available on `PipelineBuilder<rs_netty::pipeline::state::Start, rs_netty::pipeline::builder::Missing, Identity, Identity, rs_netty::pipeline::builder::Missing, Identity, (), (), ()>`
