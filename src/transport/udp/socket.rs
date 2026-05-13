@@ -1,4 +1,4 @@
-use std::{future, net::SocketAddr};
+use std::net::SocketAddr;
 
 use bytes::BytesMut;
 use tokio::{
@@ -11,7 +11,7 @@ use crate::{
     context::{BusinessContext, DatagramContext, DatagramInfo, InboundContext, OutboundContext},
     life::Life,
     pipeline::datagram::runtime::DatagramRuntimePipeline,
-    transport::udp::config::UdpSocketConfig,
+    transport::{shutdown, udp::config::UdpSocketConfig},
     Error, Result,
 };
 
@@ -54,7 +54,7 @@ where
 
     let result: Result<()> = async {
         loop {
-            if shutdown_requested(&shutdown_rx) {
+            if shutdown::requested(&shutdown_rx) {
                 break;
             }
 
@@ -112,7 +112,7 @@ where
                     }
                 }
 
-                _ = wait_for_shutdown(&mut shutdown_rx) => {
+                _ = shutdown::wait(&mut shutdown_rx) => {
                     break;
                 }
             }
@@ -136,21 +136,6 @@ where
             Err(err)
         }
     }
-}
-
-fn shutdown_requested(shutdown_rx: &Option<watch::Receiver<bool>>) -> bool {
-    shutdown_rx
-        .as_ref()
-        .is_some_and(|shutdown_rx| *shutdown_rx.borrow())
-}
-
-async fn wait_for_shutdown(shutdown_rx: &mut Option<watch::Receiver<bool>>) {
-    let Some(shutdown_rx) = shutdown_rx else {
-        future::pending::<()>().await;
-        return;
-    };
-
-    let _ = shutdown_rx.changed().await;
 }
 
 async fn drain_pending_writes<P>(

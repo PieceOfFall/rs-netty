@@ -1,4 +1,4 @@
-use std::{future, net::SocketAddr};
+use std::net::SocketAddr;
 
 use bytes::BytesMut;
 use tokio::{
@@ -12,7 +12,7 @@ use crate::{
     context::{BusinessContext, ConnInfo, Context, InboundContext, OutboundContext},
     life::{CloseReason, Life},
     pipeline::stream::runtime::StreamRuntimePipeline,
-    transport::tcp::config::TcpConnectionConfig,
+    transport::{shutdown, tcp::config::TcpConnectionConfig},
     Error, Result,
 };
 
@@ -94,7 +94,7 @@ where
     let mut write_buf = BytesMut::with_capacity(config.write_buffer_capacity);
 
     loop {
-        if shutdown_requested(&shutdown_rx) {
+        if shutdown::requested(&shutdown_rx) {
             break;
         }
 
@@ -148,28 +148,13 @@ where
                 }
             }
 
-            _ = wait_for_shutdown(&mut shutdown_rx) => {
+            _ = shutdown::wait(&mut shutdown_rx) => {
                 break;
             }
         }
     }
 
     Ok(())
-}
-
-fn shutdown_requested(shutdown_rx: &Option<watch::Receiver<bool>>) -> bool {
-    shutdown_rx
-        .as_ref()
-        .is_some_and(|shutdown_rx| *shutdown_rx.borrow())
-}
-
-async fn wait_for_shutdown(shutdown_rx: &mut Option<watch::Receiver<bool>>) {
-    let Some(shutdown_rx) = shutdown_rx else {
-        future::pending::<()>().await;
-        return;
-    };
-
-    let _ = shutdown_rx.changed().await;
 }
 
 async fn drain_pending_writes<P>(
