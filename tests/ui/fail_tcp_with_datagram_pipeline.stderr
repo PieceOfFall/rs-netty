@@ -16,11 +16,11 @@ help: the trait `IntoStreamPipeline` is implemented for `PipelineBuilder<rs_nett
    | |     Write: Send + 'static,
    | |     CurrentOut: Send + 'static,
    | |_______________________________^
-note: required by a bound in `TcpServer::pipeline`
+note: required by a bound in `TcpServer::<rs_netty::server::NoPipeline, L>::pipeline`
   --> src/transport/tcp/server.rs
    |
-   |     pub fn pipeline<F, B, P>(self, factory: F) -> TcpServer<F>
+   |     pub fn pipeline<F, B, P>(self, factory: F) -> TcpServer<F, L>
    |            -------- required by a bound in this associated function
 ...
    |         B: IntoStreamPipeline<Pipeline = P>,
-   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `TcpServer::pipeline`
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `TcpServer::<NoPipeline, L>::pipeline`

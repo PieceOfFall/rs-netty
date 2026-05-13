@@ -7,4 +7,5 @@ fn compile_pass() {
     t.pass("tests/ui/pass_udp_echo.rs");
     t.pass("tests/ui/pass_udp_client.rs");
     t.pass("tests/ui/pass_udp_typed_chain.rs");
+    t.pass("tests/ui/pass_life.rs");
 }

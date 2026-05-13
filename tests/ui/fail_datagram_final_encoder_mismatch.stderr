@@ -12,11 +12,11 @@ help: the trait `DatagramEncoder<Response>` is not implemented for `Utf8Datagram
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    = help: for that trait implementation, expected `String`, found `Response`
    = note: required for `DatagramPipelineBuilder<rs_netty::pipeline::state::Ready, Utf8DatagramCodec, Identity, Identity, Route, Identity, String, Response, Response>` to implement `IntoDatagramPipeline`
-note: required by a bound in `UdpServer::pipeline`
+note: required by a bound in `UdpServer::<rs_netty::transport::udp::server::NoPipeline, L>::pipeline`
   --> src/transport/udp/server.rs
    |
-   |     pub fn pipeline<F, B, P>(self, factory: F) -> UdpServer<F>
+   |     pub fn pipeline<F, B, P>(self, factory: F) -> UdpServer<F, L>
    |            -------- required by a bound in this associated function
 ...
    |         B: IntoDatagramPipeline<Pipeline = P>,
-   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `UdpServer::pipeline`
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `UdpServer::<NoPipeline, L>::pipeline`

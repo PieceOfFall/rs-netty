@@ -8,8 +8,12 @@ use tokio::{
 
 use crate::{
     channel::{command::StreamCommand, Channel},
+    life::{Life, NoLife},
     pipeline::{stream::builder::IntoStreamPipeline, stream::runtime::StreamRuntimePipeline},
-    transport::tcp::{config::TcpConnectionConfig, connection::run_stream_connection},
+    transport::tcp::{
+        config::TcpConnectionConfig,
+        connection::{run_stream_connection_with_life, StreamConnection},
+    },
     Result,
 };
 
@@ -17,24 +21,28 @@ pub type TcpClientConfig = TcpConnectionConfig;
 
 pub struct NoPipeline;
 
-pub struct TcpClient<F = NoPipeline> {
+pub struct TcpClient<F = NoPipeline, L = NoLife> {
     remote_addr: String,
     local_addr: Option<String>,
     pipeline_factory: F,
     config: TcpConnectionConfig,
+    life: L,
 }
 
-impl TcpClient<NoPipeline> {
+impl TcpClient<NoPipeline, NoLife> {
     pub fn connect(remote_addr: impl Into<String>) -> Self {
         Self {
             remote_addr: remote_addr.into(),
             local_addr: None,
             pipeline_factory: NoPipeline,
             config: TcpConnectionConfig::default(),
+            life: NoLife,
         }
     }
+}
 
-    pub fn pipeline<F, B, P>(self, factory: F) -> TcpClient<F>
+impl<L> TcpClient<NoPipeline, L> {
+    pub fn pipeline<F, B, P>(self, factory: F) -> TcpClient<F, L>
     where
         F: Fn() -> B + Clone + Send + Sync + 'static,
         B: IntoStreamPipeline<Pipeline = P>,
@@ -45,11 +53,22 @@ impl TcpClient<NoPipeline> {
             local_addr: self.local_addr,
             pipeline_factory: factory,
             config: self.config,
+            life: self.life,
         }
     }
 }
 
-impl<F> TcpClient<F> {
+impl<F, L> TcpClient<F, L> {
+    pub fn life<NextLife>(self, life: NextLife) -> TcpClient<F, NextLife> {
+        TcpClient {
+            remote_addr: self.remote_addr,
+            local_addr: self.local_addr,
+            pipeline_factory: self.pipeline_factory,
+            config: self.config,
+            life,
+        }
+    }
+
     pub fn bind(mut self, local_addr: impl Into<String>) -> Self {
         self.local_addr = Some(local_addr.into());
         self
@@ -85,6 +104,7 @@ impl<F> TcpClient<F> {
         F: Fn() -> B + Clone + Send + Sync + 'static,
         B: IntoStreamPipeline<Pipeline = P>,
         P: StreamRuntimePipeline,
+        L: Life,
     {
         let remote_addr = self.remote_addr.parse::<SocketAddr>()?;
         let stream = connect_stream(remote_addr, self.local_addr.as_deref()).await?;
@@ -97,17 +117,21 @@ impl<F> TcpClient<F> {
         let (tx, rx) = mpsc::channel::<StreamCommand<P::Write>>(config.outbound_queue_size);
         let channel = Channel::new(1, peer_addr, local_addr, tx);
         let connection_channel = channel.clone();
+        let life = self.life;
 
         let join = tokio::spawn(async move {
-            run_stream_connection(
-                1,
-                stream,
-                peer_addr,
-                local_addr,
-                pipeline,
-                config,
-                connection_channel,
-                rx,
+            run_stream_connection_with_life(
+                StreamConnection {
+                    id: 1,
+                    stream,
+                    peer_addr,
+                    local_addr,
+                    pipeline,
+                    config,
+                    channel: connection_channel,
+                    rx,
+                },
+                life,
             )
             .await
         });

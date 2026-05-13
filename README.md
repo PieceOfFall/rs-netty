@@ -116,6 +116,32 @@ UDP support is datagram-oriented. `UdpServer` uses one socket-level pipeline and
 
 `DatagramContext::write(msg)` replies to the current datagram peer. `DatagramContext::write_to(peer, msg)` and `DatagramChannel::write_to(peer, msg)` send to an explicit peer.
 
+## Lifecycle Hooks
+
+Servers and clients can attach optional lifecycle hooks with `.life(...)`. The default is `NoLife`, so applications that do not need hooks pay no dynamic dispatch cost.
+
+```rust
+use std::net::SocketAddr;
+
+use rs_netty::{codec::LineCodec, pipeline, Life, Result, TcpServer};
+
+#[derive(Clone, Copy)]
+struct TraceLife;
+
+impl Life for TraceLife {
+    async fn tcp_server_started(&self, local_addr: SocketAddr) -> Result<()> {
+        tracing::info!(%local_addr, "tcp server started");
+        Ok(())
+    }
+}
+
+TcpServer::bind("127.0.0.1:9000")
+    .pipeline(|| pipeline().codec(LineCodec::new()).handler(MyHandler))
+    .life(TraceLife)
+    .run()
+    .await
+```
+
 ## Built-In Codecs
 
 Stream codecs use Netty-style names:

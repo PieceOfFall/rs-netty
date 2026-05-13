@@ -6,84 +6,107 @@ use tokio::{net::UdpSocket, sync::mpsc};
 use crate::{
     channel::{command::DatagramCommand, DatagramChannel},
     context::{BusinessContext, DatagramContext, DatagramInfo, InboundContext, OutboundContext},
+    life::Life,
     pipeline::datagram::runtime::DatagramRuntimePipeline,
     transport::udp::config::UdpSocketConfig,
     Error, Result,
 };
 
-pub(crate) async fn run_datagram_socket<P>(
+pub(crate) async fn run_datagram_socket_with_life<P, L>(
     id: u64,
     socket: UdpSocket,
     mut pipeline: P,
     config: UdpSocketConfig,
     channel: DatagramChannel<P::Write>,
     mut rx: mpsc::Receiver<DatagramCommand<P::Write>>,
+    life: L,
 ) -> Result<()>
 where
     P: DatagramRuntimePipeline,
+    L: Life,
 {
     let local_addr = socket.local_addr()?;
     let mut read_buf = vec![0_u8; config.read_buffer_capacity.max(1)];
     let mut write_buf = BytesMut::with_capacity(config.write_buffer_capacity);
 
-    loop {
-        tokio::select! {
-            read = socket.recv_from(&mut read_buf) => {
-                let (read_len, peer_addr) = read?;
+    life.udp_socket_started(local_addr).await?;
 
-                if read_len > config.max_datagram_size {
-                    return Err(Error::DatagramTooLarge {
-                        current: read_len,
-                        max: config.max_datagram_size,
-                    });
-                }
+    let result: Result<()> = async {
+        loop {
+            tokio::select! {
+                read = socket.recv_from(&mut read_buf) => {
+                    let (read_len, peer_addr) = read?;
 
-                let msg = pipeline.decode_datagram(&read_buf[..read_len])?;
-                let info = DatagramInfo::new(id, peer_addr, local_addr);
-                let mut inbound_ctx = InboundContext::new_datagram(info);
-                let mut business_ctx = BusinessContext::new_datagram(info);
-                let mut ctx = DatagramContext::new(info, channel.clone());
-                let mut outbound_ctx = OutboundContext::new_datagram(info);
+                    if read_len > config.max_datagram_size {
+                        return Err(Error::DatagramTooLarge {
+                            current: read_len,
+                            max: config.max_datagram_size,
+                        });
+                    }
 
-                pipeline
-                    .process_inbound(&mut inbound_ctx, &mut business_ctx, &mut ctx, msg)
+                    let msg = pipeline.decode_datagram(&read_buf[..read_len])?;
+                    let info = DatagramInfo::new(id, peer_addr, local_addr);
+                    let mut inbound_ctx = InboundContext::new_datagram(info);
+                    let mut business_ctx = BusinessContext::new_datagram(info);
+                    let mut ctx = DatagramContext::new(info, channel.clone());
+                    let mut outbound_ctx = OutboundContext::new_datagram(info);
+
+                    pipeline
+                        .process_inbound(&mut inbound_ctx, &mut business_ctx, &mut ctx, msg)
+                        .await?;
+
+                    drain_pending_writes(
+                        &socket,
+                        &mut pipeline,
+                        &mut outbound_ctx,
+                        &mut ctx,
+                        &mut write_buf,
+                    )
                     .await?;
 
-                drain_pending_writes(
-                    &socket,
-                    &mut pipeline,
-                    &mut outbound_ctx,
-                    &mut ctx,
-                    &mut write_buf,
-                )
-                .await?;
-
-                if ctx.close_requested() {
-                    return Ok(());
-                }
-            }
-
-            cmd = rx.recv() => {
-                match cmd {
-                    Some(DatagramCommand::WriteTo(peer_addr, msg)) => {
-                        let info = DatagramInfo::new(id, peer_addr, local_addr);
-                        let mut outbound_ctx = OutboundContext::new_datagram(info);
-
-                        pipeline
-                            .process_outbound(&mut outbound_ctx, msg, &mut write_buf)
-                            .await?;
-
-                        flush_datagram(&socket, peer_addr, &mut write_buf).await?;
+                    if ctx.close_requested() {
+                        return Ok(());
                     }
-                    Some(DatagramCommand::Close) | None => {
-                        break;
+                }
+
+                cmd = rx.recv() => {
+                    match cmd {
+                        Some(DatagramCommand::WriteTo(peer_addr, msg)) => {
+                            let info = DatagramInfo::new(id, peer_addr, local_addr);
+                            let mut outbound_ctx = OutboundContext::new_datagram(info);
+
+                            pipeline
+                                .process_outbound(&mut outbound_ctx, msg, &mut write_buf)
+                                .await?;
+
+                            flush_datagram(&socket, peer_addr, &mut write_buf).await?;
+                        }
+                        Some(DatagramCommand::Close) | None => {
+                            break;
+                        }
                     }
                 }
             }
         }
-    }
 
-    Ok(())
+        Ok(())
+    }
+    .await;
+
+    match result {
+        Ok(()) => life.udp_socket_stopped(local_addr).await,
+        Err(err) => {
+            if let Err(life_err) = life.udp_socket_stopped(local_addr).await {
+                tracing::debug!(
+                    local_addr = %local_addr,
+                    error = ?life_err,
+                    "udp life hook failed while stopping errored socket"
+                );
+            }
+
+            Err(err)
+        }
+    }
 }
 
 async fn drain_pending_writes<P>(

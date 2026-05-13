@@ -10,24 +10,77 @@ use tokio::{
 use crate::{
     channel::{command::StreamCommand, Channel},
     context::{BusinessContext, ConnInfo, Context, InboundContext, OutboundContext},
+    life::{CloseReason, Life},
     pipeline::stream::runtime::StreamRuntimePipeline,
     transport::tcp::config::TcpConnectionConfig,
     Error, Result,
 };
 
-pub(crate) async fn run_stream_connection<P>(
-    id: u64,
-    mut stream: TcpStream,
-    peer_addr: SocketAddr,
-    local_addr: SocketAddr,
-    mut pipeline: P,
-    config: TcpConnectionConfig,
-    channel: Channel<P::Write>,
-    mut rx: mpsc::Receiver<StreamCommand<P::Write>>,
-) -> Result<()>
+pub(crate) struct StreamConnection<P>
 where
     P: StreamRuntimePipeline,
 {
+    pub id: u64,
+    pub stream: TcpStream,
+    pub peer_addr: SocketAddr,
+    pub local_addr: SocketAddr,
+    pub pipeline: P,
+    pub config: TcpConnectionConfig,
+    pub channel: Channel<P::Write>,
+    pub rx: mpsc::Receiver<StreamCommand<P::Write>>,
+}
+
+pub(crate) async fn run_stream_connection_with_life<P, L>(
+    connection: StreamConnection<P>,
+    life: L,
+) -> Result<()>
+where
+    P: StreamRuntimePipeline,
+    L: Life,
+{
+    let id = connection.id;
+    let peer_addr = connection.peer_addr;
+    let local_addr = connection.local_addr;
+    let info = ConnInfo::new(id, peer_addr, local_addr);
+
+    life.tcp_connection_opened(info).await?;
+
+    let result = run_stream_connection(connection).await;
+
+    match result {
+        Ok(()) => {
+            life.tcp_connection_closed(info, CloseReason::Completed)
+                .await
+        }
+        Err(err) => {
+            if let Err(life_err) = life.tcp_connection_closed(info, CloseReason::Error).await {
+                tracing::debug!(
+                    connection_id = id,
+                    error = ?life_err,
+                    "tcp life hook failed while closing errored connection"
+                );
+            }
+
+            Err(err)
+        }
+    }
+}
+
+pub(crate) async fn run_stream_connection<P>(connection: StreamConnection<P>) -> Result<()>
+where
+    P: StreamRuntimePipeline,
+{
+    let StreamConnection {
+        id,
+        mut stream,
+        peer_addr,
+        local_addr,
+        mut pipeline,
+        config,
+        channel,
+        mut rx,
+    } = connection;
+
     let info = ConnInfo::new(id, peer_addr, local_addr);
 
     let mut ctx = Context::new(info, channel);
