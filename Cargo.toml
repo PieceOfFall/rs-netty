@@ -3,9 +3,9 @@ name = "rs_netty"
 version = "0.2.0"
 edition = "2021"
 rust-version = "1.75"
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 description = "A Tokio-native typed TCP/UDP pipeline framework inspired by Netty."
-repository = ""
+repository = "https://github.com/PieceOfFall/rs-netty"
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
