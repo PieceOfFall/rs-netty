@@ -76,6 +76,15 @@ impl<W: Send + 'static> Channel<W> {
             .map_err(|_| Error::ChannelClosed)
     }
 
+    pub async fn write_and_flush(&self, msg: W) -> Result<()> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.tx
+            .send(StreamCommand::WriteAndFlush(msg, tx))
+            .await
+            .map_err(|_| Error::ChannelClosed)?;
+        rx.await.map_err(|_| Error::ChannelClosed)?
+    }
+
     pub async fn close(&self) -> Result<()> {
         self.tx
             .send(StreamCommand::Close)

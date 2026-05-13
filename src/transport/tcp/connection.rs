@@ -240,16 +240,18 @@ where
             }
 
             self.pipeline
-                .process_inbound(
+                .process_inbound_flushable(
                     &mut self.inbound_ctx,
                     &mut self.business_ctx,
+                    &mut self.outbound_ctx,
                     &mut self.ctx,
+                    &mut self.stream,
+                    &mut self.write_buf,
+                    &self.stats,
                     msg,
                 )
                 .await
                 .map_err(handler_failure)?;
-
-            self.drain_pending_writes().await?;
 
             if self.ctx.close_requested() {
                 return Ok(Some(CloseReason::HandlerClosed));
@@ -276,25 +278,34 @@ where
                 self.flush_write_buf().await?;
                 Ok(None)
             }
+            Some(StreamCommand::WriteAndFlush(msg, done)) => {
+                let result = async {
+                    self.pipeline
+                        .process_outbound(&mut self.outbound_ctx, msg, &mut self.write_buf)
+                        .await
+                        .map_err(outbound_failure)?;
+                    if let Some(stats) = &self.stats {
+                        stats.add_frame_written();
+                    }
+
+                    self.flush_write_buf().await
+                }
+                .await;
+
+                let ack = match &result {
+                    Ok(()) => Ok(()),
+                    Err(err) => Err(Error::Pipeline(format!(
+                        "write_and_flush failed: {:?}",
+                        err.error
+                    ))),
+                };
+                let _ = done.send(ack);
+                result?;
+                Ok(None)
+            }
             Some(StreamCommand::Close) => Ok(Some(CloseReason::LocalClosed)),
             None => Ok(Some(CloseReason::ChannelClosed)),
         }
-    }
-
-    async fn drain_pending_writes(&mut self) -> ConnectionResult<()> {
-        let writes = self.ctx.take_pending_writes();
-
-        for msg in writes {
-            self.pipeline
-                .process_outbound(&mut self.outbound_ctx, msg, &mut self.write_buf)
-                .await
-                .map_err(outbound_failure)?;
-            if let Some(stats) = &self.stats {
-                stats.add_frame_written();
-            }
-        }
-
-        self.flush_write_buf().await
     }
 
     async fn flush_write_buf(&mut self) -> ConnectionResult<()> {

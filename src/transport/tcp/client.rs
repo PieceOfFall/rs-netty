@@ -169,6 +169,10 @@ impl<W: Send + 'static> TcpClientHandle<W> {
         self.channel.write(msg).await
     }
 
+    pub async fn write_and_flush(&self, msg: W) -> Result<()> {
+        self.channel.write_and_flush(msg).await
+    }
+
     pub async fn close(&self) -> Result<()> {
         self.channel.close().await
     }

@@ -56,6 +56,15 @@ impl<W: Send + 'static> DatagramChannel<W> {
             .map_err(|_| Error::ChannelClosed)
     }
 
+    pub async fn write_to_and_flush(&self, peer_addr: SocketAddr, msg: W) -> Result<()> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.tx
+            .send(DatagramCommand::WriteToAndFlush(peer_addr, msg, tx))
+            .await
+            .map_err(|_| Error::ChannelClosed)?;
+        rx.await.map_err(|_| Error::ChannelClosed)?
+    }
+
     pub async fn close(&self) -> Result<()> {
         self.tx
             .send(DatagramCommand::Close)

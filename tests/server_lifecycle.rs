@@ -7,11 +7,11 @@ use std::time::Duration;
 use rs_netty::{
     codec::{LineCodec, Utf8DatagramCodec},
     datagram_pipeline, pipeline, CloseReason, ConnInfo, ConnectionStats, Context, DatagramContext,
-    DatagramHandler, Life, Result, TcpServer, UdpServer,
+    DatagramHandler, Error, Life, Result, TcpServer, UdpServer,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
+    net::{TcpStream, UdpSocket},
 };
 
 #[tokio::test]
@@ -109,6 +109,65 @@ async fn tcp_connection_stats_are_opt_in() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn tcp_context_write_and_flush_flushes_before_handler_returns() -> Result<()> {
+    let server = TcpServer::bind("127.0.0.1:0")
+        .pipeline(|| pipeline().codec(LineCodec::new()).handler(FlushTwice))
+        .start()
+        .await?;
+
+    let mut stream = TcpStream::connect(server.local_addr()).await?;
+    stream.write_all(b"go\n").await?;
+
+    let mut first = vec![0; b"first\n".len()];
+    tokio::time::timeout(Duration::from_millis(50), stream.read_exact(&mut first))
+        .await
+        .map_err(|err| Error::Pipeline(err.to_string()))??;
+    assert_eq!(first, b"first\n");
+
+    let mut second = vec![0; b"second\n".len()];
+    tokio::time::timeout(Duration::from_millis(200), stream.read_exact(&mut second))
+        .await
+        .map_err(|err| Error::Pipeline(err.to_string()))??;
+    assert_eq!(second, b"second\n");
+
+    drop(stream);
+    server.shutdown();
+    server.wait().await
+}
+
+#[tokio::test]
+async fn udp_context_write_and_flush_sends_before_handler_returns() -> Result<()> {
+    let server = UdpServer::bind("127.0.0.1:0")
+        .pipeline(|| {
+            datagram_pipeline()
+                .codec(Utf8DatagramCodec)
+                .handler(UdpFlushTwice)
+        })
+        .start()
+        .await?;
+
+    let socket = UdpSocket::bind("127.0.0.1:0").await?;
+    socket.send_to(b"go", server.local_addr()).await?;
+
+    let mut first = vec![0; b"first".len()];
+    let (first_len, _) =
+        tokio::time::timeout(Duration::from_millis(50), socket.recv_from(&mut first))
+            .await
+            .map_err(|err| Error::Pipeline(err.to_string()))??;
+    assert_eq!(&first[..first_len], b"first");
+
+    let mut second = vec![0; b"second".len()];
+    let (second_len, _) =
+        tokio::time::timeout(Duration::from_millis(200), socket.recv_from(&mut second))
+            .await
+            .map_err(|err| Error::Pipeline(err.to_string()))??;
+    assert_eq!(&second[..second_len], b"second");
+
+    server.shutdown();
+    server.wait().await
+}
+
 #[derive(Clone, Default)]
 struct CountLife {
     started: Arc<AtomicUsize>,
@@ -178,6 +237,18 @@ impl rs_netty::Handler<String> for StatsEcho {
     }
 }
 
+struct FlushTwice;
+
+impl rs_netty::Handler<String> for FlushTwice {
+    type Write = String;
+
+    async fn read(&mut self, ctx: &mut Context<Self::Write>, _msg: String) -> Result<()> {
+        ctx.write_and_flush("first".to_string()).await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        ctx.write_and_flush("second".to_string()).await
+    }
+}
+
 struct UdpEcho;
 
 impl DatagramHandler<String> for UdpEcho {
@@ -185,5 +256,17 @@ impl DatagramHandler<String> for UdpEcho {
 
     async fn read(&mut self, ctx: &mut DatagramContext<Self::Write>, msg: String) -> Result<()> {
         ctx.write(msg).await
+    }
+}
+
+struct UdpFlushTwice;
+
+impl DatagramHandler<String> for UdpFlushTwice {
+    type Write = String;
+
+    async fn read(&mut self, ctx: &mut DatagramContext<Self::Write>, _msg: String) -> Result<()> {
+        ctx.write_and_flush("first".to_string()).await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        ctx.write_and_flush("second".to_string()).await
     }
 }

@@ -151,8 +151,16 @@ impl<W: Send + 'static> UdpClientHandle<W> {
         self.channel.write_to(self.remote_addr, msg).await
     }
 
+    pub async fn write_and_flush(&self, msg: W) -> Result<()> {
+        self.channel.write_to_and_flush(self.remote_addr, msg).await
+    }
+
     pub async fn write_to(&self, peer_addr: SocketAddr, msg: W) -> Result<()> {
         self.channel.write_to(peer_addr, msg).await
+    }
+
+    pub async fn write_to_and_flush(&self, peer_addr: SocketAddr, msg: W) -> Result<()> {
+        self.channel.write_to_and_flush(peer_addr, msg).await
     }
 
     pub async fn close(&self) -> Result<()> {

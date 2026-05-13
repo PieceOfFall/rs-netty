@@ -1,5 +1,3 @@
-use std::net::SocketAddr;
-
 use bytes::BytesMut;
 use tokio::{
     net::UdpSocket,
@@ -10,7 +8,7 @@ use crate::{
     channel::{command::DatagramCommand, DatagramChannel},
     context::{BusinessContext, DatagramContext, DatagramInfo, InboundContext, OutboundContext},
     life::Life,
-    pipeline::datagram::runtime::DatagramRuntimePipeline,
+    pipeline::datagram::runtime::{flush_datagram, DatagramRuntimePipeline},
     transport::{shutdown, udp::config::UdpSocketConfig},
     Error, Result,
 };
@@ -81,17 +79,16 @@ where
                     let mut outbound_ctx = OutboundContext::new_datagram(info);
 
                     pipeline
-                        .process_inbound(&mut inbound_ctx, &mut business_ctx, &mut ctx, msg)
+                        .process_inbound_flushable(
+                            &mut inbound_ctx,
+                            &mut business_ctx,
+                            &mut outbound_ctx,
+                            &mut ctx,
+                            &socket,
+                            &mut write_buf,
+                            msg,
+                        )
                         .await?;
-
-                    drain_pending_writes(
-                        &socket,
-                        &mut pipeline,
-                        &mut outbound_ctx,
-                        &mut ctx,
-                        &mut write_buf,
-                    )
-                    .await?;
 
                     if ctx.close_requested() {
                         return Ok(());
@@ -109,6 +106,27 @@ where
                                 .await?;
 
                             flush_datagram(&socket, peer_addr, &mut write_buf).await?;
+                        }
+                        Some(DatagramCommand::WriteToAndFlush(peer_addr, msg, done)) => {
+                            let info = DatagramInfo::new(id, peer_addr, local_addr);
+                            let mut outbound_ctx = OutboundContext::new_datagram(info);
+
+                            let result = async {
+                                pipeline
+                                    .process_outbound(&mut outbound_ctx, msg, &mut write_buf)
+                                    .await?;
+                                flush_datagram(&socket, peer_addr, &mut write_buf).await
+                            }
+                            .await;
+
+                            let ack = match &result {
+                                Ok(()) => Ok(()),
+                                Err(err) => Err(Error::Pipeline(format!(
+                                    "write_to_and_flush failed: {err}"
+                                ))),
+                            };
+                            let _ = done.send(ack);
+                            result?;
                         }
                         Some(DatagramCommand::Close) | None => {
                             break;
@@ -140,40 +158,4 @@ where
             Err(err)
         }
     }
-}
-
-async fn drain_pending_writes<P>(
-    socket: &UdpSocket,
-    pipeline: &mut P,
-    outbound_ctx: &mut OutboundContext,
-    ctx: &mut DatagramContext<P::Write>,
-    write_buf: &mut BytesMut,
-) -> Result<()>
-where
-    P: DatagramRuntimePipeline,
-{
-    let writes = ctx.take_pending_writes();
-
-    for (peer_addr, msg) in writes {
-        pipeline
-            .process_outbound(outbound_ctx, msg, write_buf)
-            .await?;
-
-        flush_datagram(socket, peer_addr, write_buf).await?;
-    }
-
-    Ok(())
-}
-
-async fn flush_datagram(
-    socket: &UdpSocket,
-    peer_addr: SocketAddr,
-    write_buf: &mut BytesMut,
-) -> Result<()> {
-    if !write_buf.is_empty() {
-        socket.send_to(write_buf, peer_addr).await?;
-        write_buf.clear();
-    }
-
-    Ok(())
 }
