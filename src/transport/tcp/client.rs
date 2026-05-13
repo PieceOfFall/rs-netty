@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 
 use tokio::{
     net::{TcpSocket, TcpStream},
@@ -96,6 +96,11 @@ impl<F, L> TcpClient<F, L> {
 
     pub fn tcp_nodelay(mut self, value: bool) -> Self {
         self.config.tcp_nodelay = value;
+        self
+    }
+
+    pub fn idle_timeout(mut self, value: Duration) -> Self {
+        self.config.idle_timeout = Some(value);
         self
     }
 

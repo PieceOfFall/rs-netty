@@ -154,6 +154,18 @@ server.shutdown();
 server.wait().await?;
 ```
 
+TCP servers and clients can also enable an optional idle timeout:
+
+```rust
+TcpServer::bind("127.0.0.1:9000")
+    .idle_timeout(std::time::Duration::from_secs(90))
+    .pipeline(|| pipeline().codec(LineCodec::new()).handler(MyHandler))
+    .run()
+    .await
+```
+
+When no idle timeout is configured, the TCP connection loop uses the no-timeout path and does not create a timer.
+
 ## Built-In Codecs
 
 Stream codecs use Netty-style names:

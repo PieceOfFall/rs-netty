@@ -12,7 +12,7 @@ help: the trait `Encoder<Response>` is not implemented for `LineCodec`
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    = help: for that trait implementation, expected `String`, found `Response`
    = note: required for `PipelineBuilder<rs_netty::pipeline::state::Ready, LineCodec, Identity, Identity, Router, Identity, String, Response, Response>` to implement `IntoStreamPipeline`
-note: required by a bound in `TcpServer::<rs_netty::server::NoPipeline, L>::pipeline`
+note: required by a bound in `TcpServer::<rs_netty::transport::tcp::server::NoPipeline, L>::pipeline`
   --> src/transport/tcp/server.rs
    |
    |     pub fn pipeline<F, B, P>(self, factory: F) -> TcpServer<F, L>

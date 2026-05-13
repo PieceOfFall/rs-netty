@@ -4,6 +4,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
+    time::Duration,
 };
 
 use tokio::{
@@ -94,6 +95,11 @@ impl<F, L> TcpServer<F, L> {
 
     pub fn tcp_nodelay(mut self, value: bool) -> Self {
         self.config.tcp_nodelay = value;
+        self
+    }
+
+    pub fn idle_timeout(mut self, value: Duration) -> Self {
+        self.config.idle_timeout = Some(value);
         self
     }
 

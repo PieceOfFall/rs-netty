@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 #[derive(Clone)]
 pub struct TcpConnectionConfig {
     pub read_buffer_capacity: usize,
@@ -5,6 +7,7 @@ pub struct TcpConnectionConfig {
     pub max_frame_size: usize,
     pub outbound_queue_size: usize,
     pub tcp_nodelay: bool,
+    pub idle_timeout: Option<Duration>,
 }
 
 impl Default for TcpConnectionConfig {
@@ -15,6 +18,7 @@ impl Default for TcpConnectionConfig {
             max_frame_size: 1024 * 1024,
             outbound_queue_size: 1024,
             tcp_nodelay: true,
+            idle_timeout: None,
         }
     }
 }

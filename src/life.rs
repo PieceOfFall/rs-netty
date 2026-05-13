@@ -4,8 +4,17 @@ use crate::{context::ConnInfo, Result};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CloseReason {
-    Completed,
-    Error,
+    PeerClosed,
+    LocalClosed,
+    ChannelClosed,
+    HandlerClosed,
+    ServerShutdown,
+    IdleTimeout,
+    IoError,
+    DecodeError,
+    EncodeError,
+    FrameTooLarge,
+    HandlerError,
 }
 
 #[derive(Clone, Copy, Debug, Default)]

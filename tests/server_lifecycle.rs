@@ -1,13 +1,15 @@
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc,
+    Arc, Mutex,
 };
+use std::time::Duration;
 
 use rs_netty::{
     codec::{LineCodec, Utf8DatagramCodec},
-    datagram_pipeline, pipeline, Context, DatagramContext, DatagramHandler, Life, Result,
-    TcpServer, UdpServer,
+    datagram_pipeline, pipeline, CloseReason, ConnInfo, Context, DatagramContext, DatagramHandler,
+    Life, Result, TcpServer, UdpServer,
 };
+use tokio::net::TcpStream;
 
 #[tokio::test]
 async fn tcp_server_shutdown_stops_server() -> Result<()> {
@@ -52,6 +54,26 @@ async fn udp_server_shutdown_stops_socket() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn tcp_idle_timeout_closes_idle_connection() -> Result<()> {
+    let life = ReasonLife::default();
+    let server = TcpServer::bind("127.0.0.1:0")
+        .pipeline(|| pipeline().codec(LineCodec::new()).handler(Echo))
+        .idle_timeout(Duration::from_millis(20))
+        .life(life.clone())
+        .start()
+        .await?;
+
+    let _stream = TcpStream::connect(server.local_addr()).await?;
+    tokio::time::sleep(Duration::from_millis(80)).await;
+
+    server.shutdown();
+    server.wait().await?;
+
+    assert!(life.contains(CloseReason::IdleTimeout));
+    Ok(())
+}
+
 #[derive(Clone, Default)]
 struct CountLife {
     started: Arc<AtomicUsize>,
@@ -76,6 +98,24 @@ impl Life for CountLife {
 
     async fn udp_socket_stopped(&self, _local_addr: std::net::SocketAddr) -> Result<()> {
         self.stopped.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+#[derive(Clone, Default)]
+struct ReasonLife {
+    reasons: Arc<Mutex<Vec<CloseReason>>>,
+}
+
+impl ReasonLife {
+    fn contains(&self, reason: CloseReason) -> bool {
+        self.reasons.lock().expect("reasons").contains(&reason)
+    }
+}
+
+impl Life for ReasonLife {
+    async fn tcp_connection_closed(&self, _info: ConnInfo, reason: CloseReason) -> Result<()> {
+        self.reasons.lock().expect("reasons").push(reason);
         Ok(())
     }
 }
