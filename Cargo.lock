@@ -96,7 +96,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rs_netty"
+name = "rs-netty"
 version = "0.2.0"
 dependencies = [
  "bytes",
