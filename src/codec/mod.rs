@@ -2,11 +2,19 @@ use bytes::BytesMut;
 
 use crate::Result;
 
+pub mod byte_array;
 pub mod bytes_datagram;
+pub mod delimiter_based_frame;
+pub mod fixed_length_frame;
+pub mod length_field_based_frame;
 pub mod line;
 pub mod utf8_datagram;
 
+pub use byte_array::{ByteArrayDecoder, ByteArrayEncoder};
 pub use bytes_datagram::BytesDatagramCodec;
+pub use delimiter_based_frame::DelimiterBasedFrameDecoder;
+pub use fixed_length_frame::FixedLengthFrameDecoder;
+pub use length_field_based_frame::{ByteOrder, LengthFieldBasedFrameDecoder, LengthFieldPrepender};
 pub use line::LineCodec;
 pub use utf8_datagram::Utf8DatagramCodec;
 

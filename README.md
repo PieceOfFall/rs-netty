@@ -1,6 +1,6 @@
-# rs_netty
+# rs-netty
 
-rs_netty is a Tokio-native typed TCP/UDP pipeline framework inspired by Netty. It keeps the Channel / Pipeline / Handler mental model, but uses Rust ownership, async/await, Tokio tasks, bounded mpsc, and typed messages instead of EventLoop, ChannelFuture, Promise, Object messages, and reference-counted ByteBuf.
+rs-netty is a Tokio-native typed TCP/UDP pipeline framework inspired by Netty. It keeps the Channel / Pipeline / Handler mental model, but uses Rust ownership, async/await, Tokio tasks, bounded mpsc, and typed messages instead of EventLoop, ChannelFuture, Promise, Object messages, and reference-counted ByteBuf.
 
 ## TCP Echo Server
 
@@ -115,6 +115,23 @@ Methods only exist in valid states. Message transitions are checked with trait b
 UDP support is datagram-oriented. `UdpServer` uses one socket-level pipeline and does not create per-peer child pipelines. If you need per-peer state, store it explicitly inside your handler, for example with `HashMap<SocketAddr, PeerState>`.
 
 `DatagramContext::write(msg)` replies to the current datagram peer. `DatagramContext::write_to(peer, msg)` and `DatagramChannel::write_to(peer, msg)` send to an explicit peer.
+
+## Built-In Codecs
+
+Stream codecs use Netty-style names:
+
+- `LineCodec`
+- `LengthFieldBasedFrameDecoder`
+- `LengthFieldPrepender`
+- `FixedLengthFrameDecoder`
+- `DelimiterBasedFrameDecoder`
+- `ByteArrayDecoder`
+- `ByteArrayEncoder`
+
+Datagram codecs:
+
+- `Utf8DatagramCodec`
+- `BytesDatagramCodec`
 
 ## Examples
 
