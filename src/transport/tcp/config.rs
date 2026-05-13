@@ -8,6 +8,7 @@ pub struct TcpConnectionConfig {
     pub outbound_queue_size: usize,
     pub tcp_nodelay: bool,
     pub idle_timeout: Option<Duration>,
+    pub track_connection_stats: bool,
 }
 
 impl Default for TcpConnectionConfig {
@@ -19,6 +20,7 @@ impl Default for TcpConnectionConfig {
             outbound_queue_size: 1024,
             tcp_nodelay: true,
             idle_timeout: None,
+            track_connection_stats: false,
         }
     }
 }

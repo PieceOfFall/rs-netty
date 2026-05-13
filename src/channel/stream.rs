@@ -2,13 +2,14 @@ use std::net::SocketAddr;
 
 use tokio::sync::mpsc;
 
-use crate::{channel::command::StreamCommand, Error, Result};
+use crate::{channel::command::StreamCommand, context::ConnectionStats, Error, Result};
 
 pub struct Channel<W> {
     id: u64,
     peer_addr: SocketAddr,
     local_addr: SocketAddr,
     tx: mpsc::Sender<StreamCommand<W>>,
+    stats: Option<ConnectionStats>,
 }
 
 impl<W> Clone for Channel<W> {
@@ -18,6 +19,7 @@ impl<W> Clone for Channel<W> {
             peer_addr: self.peer_addr,
             local_addr: self.local_addr,
             tx: self.tx.clone(),
+            stats: self.stats.clone(),
         }
     }
 }
@@ -28,12 +30,14 @@ impl<W: Send + 'static> Channel<W> {
         peer_addr: SocketAddr,
         local_addr: SocketAddr,
         tx: mpsc::Sender<StreamCommand<W>>,
+        stats: Option<ConnectionStats>,
     ) -> Self {
         Self {
             id,
             peer_addr,
             local_addr,
             tx,
+            stats,
         }
     }
 
@@ -47,6 +51,22 @@ impl<W: Send + 'static> Channel<W> {
 
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.tx.is_closed()
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.tx.capacity()
+    }
+
+    pub fn max_capacity(&self) -> usize {
+        self.tx.max_capacity()
+    }
+
+    pub fn stats(&self) -> Option<ConnectionStats> {
+        self.stats.clone()
     }
 
     pub async fn write(&self, msg: W) -> Result<()> {

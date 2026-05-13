@@ -37,6 +37,18 @@ impl<W: Send + 'static> DatagramChannel<W> {
         self.local_addr
     }
 
+    pub fn is_closed(&self) -> bool {
+        self.tx.is_closed()
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.tx.capacity()
+    }
+
+    pub fn max_capacity(&self) -> usize {
+        self.tx.max_capacity()
+    }
+
     pub async fn write_to(&self, peer_addr: SocketAddr, msg: W) -> Result<()> {
         self.tx
             .send(DatagramCommand::WriteTo(peer_addr, msg))

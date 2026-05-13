@@ -103,6 +103,11 @@ impl<F, L> TcpServer<F, L> {
         self
     }
 
+    pub fn track_connection_stats(mut self) -> Self {
+        self.config.track_connection_stats = true;
+        self
+    }
+
     pub async fn start<B, P>(self) -> Result<TcpServerHandle>
     where
         F: Fn() -> B + Clone + Send + Sync + 'static,
@@ -205,9 +210,12 @@ where
                     let id = ids.fetch_add(1, Ordering::Relaxed);
                     let pipeline = (pipeline_factory)().into_stream_pipeline();
                     let config = config.clone();
+                    let stats = config
+                        .track_connection_stats
+                        .then(crate::context::ConnectionStats::new);
                     let (tx, rx) =
                         mpsc::channel::<StreamCommand<P::Write>>(config.outbound_queue_size);
-                    let channel = Channel::new(id, peer_addr, local_addr, tx);
+                    let channel = Channel::new(id, peer_addr, local_addr, tx, stats.clone());
                     let life = life.clone();
                     let shutdown_rx = Some(shutdown_tx.subscribe());
 
@@ -222,6 +230,7 @@ where
                             channel,
                             rx,
                             shutdown_rx,
+                            stats,
                         };
 
                         run_stream_connection_with_life(connection, life).await

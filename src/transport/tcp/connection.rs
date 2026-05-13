@@ -9,7 +9,9 @@ use tokio::{
 
 use crate::{
     channel::{command::StreamCommand, Channel},
-    context::{BusinessContext, ConnInfo, Context, InboundContext, OutboundContext},
+    context::{
+        BusinessContext, ConnInfo, ConnectionStats, Context, InboundContext, OutboundContext,
+    },
     life::{CloseReason, Life},
     pipeline::stream::runtime::StreamRuntimePipeline,
     transport::{shutdown, tcp::config::TcpConnectionConfig},
@@ -31,6 +33,7 @@ where
     pub channel: Channel<P::Write>,
     pub rx: mpsc::Receiver<StreamCommand<P::Write>>,
     pub shutdown_rx: Option<watch::Receiver<bool>>,
+    pub stats: Option<ConnectionStats>,
 }
 
 struct ConnectionFailure {
@@ -89,6 +92,7 @@ where
         channel,
         rx,
         shutdown_rx,
+        stats,
     } = connection;
 
     let info = ConnInfo::new(id, peer_addr, local_addr);
@@ -105,6 +109,7 @@ where
         outbound_ctx: OutboundContext::new(info),
         read_buf: BytesMut::new(),
         write_buf: BytesMut::new(),
+        stats,
     };
 
     runtime.read_buf = BytesMut::with_capacity(runtime.config.read_buffer_capacity);
@@ -131,6 +136,7 @@ where
     outbound_ctx: OutboundContext,
     read_buf: BytesMut,
     write_buf: BytesMut,
+    stats: Option<ConnectionStats>,
 }
 
 impl<P> StreamConnectionRuntime<P>
@@ -210,6 +216,10 @@ where
             return Ok(Some(CloseReason::PeerClosed));
         }
 
+        if let Some(stats) = &self.stats {
+            stats.add_bytes_read(read_len);
+        }
+
         if self.read_buf.len() > self.config.max_frame_size {
             return Err(failure(
                 CloseReason::FrameTooLarge,
@@ -225,6 +235,10 @@ where
             .decode(&mut self.read_buf)
             .map_err(decode_failure)?
         {
+            if let Some(stats) = &self.stats {
+                stats.add_frame_read();
+            }
+
             self.pipeline
                 .process_inbound(
                     &mut self.inbound_ctx,
@@ -255,6 +269,9 @@ where
                     .process_outbound(&mut self.outbound_ctx, msg, &mut self.write_buf)
                     .await
                     .map_err(outbound_failure)?;
+                if let Some(stats) = &self.stats {
+                    stats.add_frame_written();
+                }
 
                 self.flush_write_buf().await?;
                 Ok(None)
@@ -272,6 +289,9 @@ where
                 .process_outbound(&mut self.outbound_ctx, msg, &mut self.write_buf)
                 .await
                 .map_err(outbound_failure)?;
+            if let Some(stats) = &self.stats {
+                stats.add_frame_written();
+            }
         }
 
         self.flush_write_buf().await
@@ -279,10 +299,14 @@ where
 
     async fn flush_write_buf(&mut self) -> ConnectionResult<()> {
         if !self.write_buf.is_empty() {
+            let len = self.write_buf.len();
             self.stream
                 .write_all(&self.write_buf)
                 .await
                 .map_err(|err| failure(CloseReason::IoError, err.into()))?;
+            if let Some(stats) = &self.stats {
+                stats.add_bytes_written(len);
+            }
             self.write_buf.clear();
         }
 

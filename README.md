@@ -166,6 +166,18 @@ TcpServer::bind("127.0.0.1:9000")
 
 When no idle timeout is configured, the TCP connection loop uses the no-timeout path and does not create a timer.
 
+TCP connection stats are also opt-in:
+
+```rust
+TcpServer::bind("127.0.0.1:9000")
+    .track_connection_stats()
+    .pipeline(|| pipeline().codec(LineCodec::new()).handler(MyHandler))
+    .run()
+    .await
+```
+
+When enabled, `Context::stats()` and `Channel::stats()` expose connection time, bytes read/written, and frames read/written. Channels also expose `is_closed()`, `capacity()`, and `max_capacity()` from the underlying Tokio queue.
+
 ## Built-In Codecs
 
 Stream codecs use Netty-style names:

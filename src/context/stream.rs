@@ -2,7 +2,10 @@ use std::net::SocketAddr;
 
 use crate::{
     channel::Channel,
-    context::info::{ConnInfo, DatagramInfo},
+    context::{
+        info::{ConnInfo, DatagramInfo},
+        ConnectionStats,
+    },
     Result,
 };
 
@@ -121,6 +124,10 @@ impl<W: Send + 'static> Context<W> {
 
     pub fn channel(&self) -> Channel<W> {
         self.channel.clone()
+    }
+
+    pub fn stats(&self) -> Option<ConnectionStats> {
+        self.channel.stats()
     }
 
     pub async fn write(&mut self, msg: W) -> Result<()> {

@@ -104,6 +104,11 @@ impl<F, L> TcpClient<F, L> {
         self
     }
 
+    pub fn track_connection_stats(mut self) -> Self {
+        self.config.track_connection_stats = true;
+        self
+    }
+
     pub async fn run<B, P>(self) -> Result<TcpClientHandle<P::Write>>
     where
         F: Fn() -> B + Clone + Send + Sync + 'static,
@@ -119,8 +124,11 @@ impl<F, L> TcpClient<F, L> {
         let peer_addr = stream.peer_addr()?;
         let pipeline = (self.pipeline_factory)().into_stream_pipeline();
         let config = self.config;
+        let stats = config
+            .track_connection_stats
+            .then(crate::context::ConnectionStats::new);
         let (tx, rx) = mpsc::channel::<StreamCommand<P::Write>>(config.outbound_queue_size);
-        let channel = Channel::new(1, peer_addr, local_addr, tx);
+        let channel = Channel::new(1, peer_addr, local_addr, tx, stats.clone());
         let connection_channel = channel.clone();
         let life = self.life;
 
@@ -136,6 +144,7 @@ impl<F, L> TcpClient<F, L> {
                     channel: connection_channel,
                     rx,
                     shutdown_rx: None,
+                    stats,
                 },
                 life,
             )

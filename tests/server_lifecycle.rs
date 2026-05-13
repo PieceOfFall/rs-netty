@@ -6,10 +6,13 @@ use std::time::Duration;
 
 use rs_netty::{
     codec::{LineCodec, Utf8DatagramCodec},
-    datagram_pipeline, pipeline, CloseReason, ConnInfo, Context, DatagramContext, DatagramHandler,
-    Life, Result, TcpServer, UdpServer,
+    datagram_pipeline, pipeline, CloseReason, ConnInfo, ConnectionStats, Context, DatagramContext,
+    DatagramHandler, Life, Result, TcpServer, UdpServer,
 };
-use tokio::net::TcpStream;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+};
 
 #[tokio::test]
 async fn tcp_server_shutdown_stops_server() -> Result<()> {
@@ -74,6 +77,38 @@ async fn tcp_idle_timeout_closes_idle_connection() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn tcp_connection_stats_are_opt_in() -> Result<()> {
+    let seen = Arc::new(Mutex::new(None));
+    let seen_stats = seen.clone();
+    let server = TcpServer::bind("127.0.0.1:0")
+        .pipeline(move || {
+            pipeline().codec(LineCodec::new()).handler(StatsEcho {
+                seen: seen_stats.clone(),
+            })
+        })
+        .track_connection_stats()
+        .start()
+        .await?;
+
+    let mut stream = TcpStream::connect(server.local_addr()).await?;
+    stream.write_all(b"hello\n").await?;
+
+    let mut response = vec![0; 6];
+    stream.read_exact(&mut response).await?;
+    drop(stream);
+
+    server.shutdown();
+    server.wait().await?;
+
+    let stats = seen.lock().expect("stats").clone().expect("stats");
+    assert!(stats.bytes_read() >= 6);
+    assert!(stats.bytes_written() >= 6);
+    assert_eq!(stats.frames_read(), 1);
+    assert_eq!(stats.frames_written(), 1);
+    Ok(())
+}
+
 #[derive(Clone, Default)]
 struct CountLife {
     started: Arc<AtomicUsize>,
@@ -126,6 +161,19 @@ impl rs_netty::Handler<String> for Echo {
     type Write = String;
 
     async fn read(&mut self, ctx: &mut Context<Self::Write>, msg: String) -> Result<()> {
+        ctx.write(msg).await
+    }
+}
+
+struct StatsEcho {
+    seen: Arc<Mutex<Option<ConnectionStats>>>,
+}
+
+impl rs_netty::Handler<String> for StatsEcho {
+    type Write = String;
+
+    async fn read(&mut self, ctx: &mut Context<Self::Write>, msg: String) -> Result<()> {
+        *self.seen.lock().expect("stats") = ctx.stats();
         ctx.write(msg).await
     }
 }
