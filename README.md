@@ -127,6 +127,7 @@ Stream codecs use Netty-style names:
 - `DelimiterBasedFrameDecoder`
 - `ByteArrayDecoder`
 - `ByteArrayEncoder`
+- `MqttCodec`
 
 Datagram codecs:
 
