@@ -1,4 +1,10 @@
-use tokio::{net::UdpSocket, sync::mpsc};
+use std::net::SocketAddr;
+
+use tokio::{
+    net::UdpSocket,
+    sync::{mpsc, watch},
+    task::JoinHandle,
+};
 
 use crate::{
     channel::{command::DatagramCommand, DatagramChannel},
@@ -6,7 +12,10 @@ use crate::{
     pipeline::{
         datagram::builder::IntoDatagramPipeline, datagram::runtime::DatagramRuntimePipeline,
     },
-    transport::udp::{config::UdpSocketConfig, socket::run_datagram_socket_with_life},
+    transport::udp::{
+        config::UdpSocketConfig,
+        socket::{run_datagram_socket_with_life, DatagramSocketRuntime},
+    },
     Result,
 };
 
@@ -78,10 +87,10 @@ impl<F, L> UdpServer<F, L> {
         self
     }
 
-    pub async fn run<B, P>(self) -> Result<()>
+    pub async fn start<B, P>(self) -> Result<UdpServerHandle>
     where
         F: Fn() -> B + Clone + Send + Sync + 'static,
-        B: IntoDatagramPipeline<Pipeline = P>,
+        B: IntoDatagramPipeline<Pipeline = P> + 'static,
         P: DatagramRuntimePipeline,
         L: Life,
     {
@@ -91,7 +100,58 @@ impl<F, L> UdpServer<F, L> {
         let config = self.config;
         let (tx, rx) = mpsc::channel::<DatagramCommand<P::Write>>(config.outbound_queue_size);
         let channel = DatagramChannel::new(1, local_addr, tx);
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let life = self.life;
 
-        run_datagram_socket_with_life(1, socket, pipeline, config, channel, rx, self.life).await
+        let join = tokio::spawn(run_datagram_socket_with_life(
+            DatagramSocketRuntime {
+                id: 1,
+                socket,
+                pipeline,
+                config,
+                channel,
+                rx,
+                shutdown_rx: Some(shutdown_rx),
+            },
+            life,
+        ));
+
+        Ok(UdpServerHandle {
+            local_addr,
+            shutdown_tx,
+            join,
+        })
+    }
+
+    pub async fn run<B, P>(self) -> Result<()>
+    where
+        F: Fn() -> B + Clone + Send + Sync + 'static,
+        B: IntoDatagramPipeline<Pipeline = P> + 'static,
+        P: DatagramRuntimePipeline,
+        L: Life,
+    {
+        self.start().await?.wait().await
+    }
+}
+
+pub struct UdpServerHandle {
+    local_addr: SocketAddr,
+    shutdown_tx: watch::Sender<bool>,
+    join: JoinHandle<Result<()>>,
+}
+
+impl UdpServerHandle {
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
+    pub fn shutdown(&self) {
+        if !*self.shutdown_tx.borrow() {
+            let _ = self.shutdown_tx.send(true);
+        }
+    }
+
+    pub async fn wait(self) -> Result<()> {
+        self.join.await?
     }
 }

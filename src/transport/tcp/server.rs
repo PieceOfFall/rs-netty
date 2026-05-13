@@ -1,9 +1,16 @@
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
+use std::{
+    net::SocketAddr,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
 
-use tokio::{net::TcpListener, sync::mpsc};
+use tokio::{
+    net::TcpListener,
+    sync::{mpsc, watch},
+    task::{JoinError, JoinHandle, JoinSet},
+};
 
 use crate::{
     channel::{command::StreamCommand, Channel},
@@ -90,10 +97,10 @@ impl<F, L> TcpServer<F, L> {
         self
     }
 
-    pub async fn run<B, P>(self) -> Result<()>
+    pub async fn start<B, P>(self) -> Result<TcpServerHandle>
     where
         F: Fn() -> B + Clone + Send + Sync + 'static,
-        B: IntoStreamPipeline<Pipeline = P>,
+        B: IntoStreamPipeline<Pipeline = P> + 'static,
         P: StreamRuntimePipeline,
         L: Life,
     {
@@ -105,56 +112,163 @@ impl<F, L> TcpServer<F, L> {
         } = self;
 
         let listener = TcpListener::bind(&addr).await?;
-        let server_addr = listener.local_addr()?;
-        let ids = Arc::new(AtomicU64::new(1));
+        let local_addr = listener.local_addr()?;
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-        life.tcp_server_started(server_addr).await?;
+        life.tcp_server_started(local_addr).await?;
 
-        let result: Result<()> = async {
-            loop {
-                let (stream, peer_addr) = listener.accept().await?;
-                stream.set_nodelay(config.tcp_nodelay)?;
+        let join = tokio::spawn(run_tcp_server(
+            listener,
+            pipeline_factory,
+            config,
+            life,
+            shutdown_tx.clone(),
+            shutdown_rx,
+        ));
 
-                let local_addr = stream.local_addr()?;
-                let id = ids.fetch_add(1, Ordering::Relaxed);
-                let pipeline = (pipeline_factory)().into_stream_pipeline();
-                let config = config.clone();
-                let (tx, rx) = mpsc::channel::<StreamCommand<P::Write>>(config.outbound_queue_size);
-                let channel = Channel::new(id, peer_addr, local_addr, tx);
-                let life = life.clone();
+        Ok(TcpServerHandle {
+            local_addr,
+            shutdown_tx,
+            join,
+        })
+    }
 
-                tokio::spawn(async move {
-                    let connection = StreamConnection {
-                        id,
-                        stream,
-                        peer_addr,
-                        local_addr,
-                        pipeline,
-                        config,
-                        channel,
-                        rx,
-                    };
+    pub async fn run<B, P>(self) -> Result<()>
+    where
+        F: Fn() -> B + Clone + Send + Sync + 'static,
+        B: IntoStreamPipeline<Pipeline = P> + 'static,
+        P: StreamRuntimePipeline,
+        L: Life,
+    {
+        self.start().await?.wait().await
+    }
+}
 
-                    if let Err(err) = run_stream_connection_with_life(connection, life).await {
-                        tracing::debug!(
-                            connection_id = id,
-                            error = ?err,
-                            "connection closed with error"
-                        );
+pub struct TcpServerHandle {
+    local_addr: SocketAddr,
+    shutdown_tx: watch::Sender<bool>,
+    join: JoinHandle<Result<()>>,
+}
+
+impl TcpServerHandle {
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
+    pub fn shutdown(&self) {
+        if !*self.shutdown_tx.borrow() {
+            let _ = self.shutdown_tx.send(true);
+        }
+    }
+
+    pub async fn wait(self) -> Result<()> {
+        self.join.await?
+    }
+}
+
+async fn run_tcp_server<F, B, P, L>(
+    listener: TcpListener,
+    pipeline_factory: F,
+    config: TcpConnectionConfig,
+    life: L,
+    shutdown_tx: watch::Sender<bool>,
+    mut shutdown_rx: watch::Receiver<bool>,
+) -> Result<()>
+where
+    F: Fn() -> B + Clone + Send + Sync + 'static,
+    B: IntoStreamPipeline<Pipeline = P> + 'static,
+    P: StreamRuntimePipeline,
+    L: Life,
+{
+    let local_addr = listener.local_addr()?;
+    let ids = Arc::new(AtomicU64::new(1));
+    let mut connections = JoinSet::new();
+
+    let result: Result<()> = async {
+        loop {
+            if *shutdown_rx.borrow() {
+                break;
+            }
+
+            tokio::select! {
+                accepted = listener.accept() => {
+                    let (stream, peer_addr) = accepted?;
+                    stream.set_nodelay(config.tcp_nodelay)?;
+
+                    let local_addr = stream.local_addr()?;
+                    let id = ids.fetch_add(1, Ordering::Relaxed);
+                    let pipeline = (pipeline_factory)().into_stream_pipeline();
+                    let config = config.clone();
+                    let (tx, rx) =
+                        mpsc::channel::<StreamCommand<P::Write>>(config.outbound_queue_size);
+                    let channel = Channel::new(id, peer_addr, local_addr, tx);
+                    let life = life.clone();
+                    let shutdown_rx = Some(shutdown_tx.subscribe());
+
+                    connections.spawn(async move {
+                        let connection = StreamConnection {
+                            id,
+                            stream,
+                            peer_addr,
+                            local_addr,
+                            pipeline,
+                            config,
+                            channel,
+                            rx,
+                            shutdown_rx,
+                        };
+
+                        run_stream_connection_with_life(connection, life).await
+                    });
+                }
+
+                changed = shutdown_rx.changed() => {
+                    if changed.is_err() || *shutdown_rx.borrow() {
+                        break;
                     }
-                });
+                }
+
+                joined = connections.join_next(), if !connections.is_empty() => {
+                    handle_connection_result(joined);
+                }
             }
         }
-        .await;
 
-        if let Err(err) = life.tcp_server_stopped(server_addr).await {
-            tracing::debug!(
-                local_addr = %server_addr,
-                error = ?err,
-                "tcp life hook failed while stopping server"
-            );
+        Ok(())
+    }
+    .await;
+
+    if !*shutdown_tx.borrow() {
+        let _ = shutdown_tx.send(true);
+    }
+
+    while let Some(joined) = connections.join_next().await {
+        handle_connection_result(Some(joined));
+    }
+
+    if let Err(err) = life.tcp_server_stopped(local_addr).await {
+        tracing::debug!(
+            local_addr = %local_addr,
+            error = ?err,
+            "tcp life hook failed while stopping server"
+        );
+    }
+
+    result
+}
+
+fn handle_connection_result(result: Option<std::result::Result<Result<()>, JoinError>>) {
+    let Some(result) = result else {
+        return;
+    };
+
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => {
+            tracing::debug!(error = ?err, "connection closed with error");
         }
-
-        result
+        Err(err) => {
+            tracing::debug!(error = ?err, "connection task failed");
+        }
     }
 }

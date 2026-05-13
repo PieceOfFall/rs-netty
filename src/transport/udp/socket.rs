@@ -1,7 +1,10 @@
-use std::net::SocketAddr;
+use std::{future, net::SocketAddr};
 
 use bytes::BytesMut;
-use tokio::{net::UdpSocket, sync::mpsc};
+use tokio::{
+    net::UdpSocket,
+    sync::{mpsc, watch},
+};
 
 use crate::{
     channel::{command::DatagramCommand, DatagramChannel},
@@ -12,19 +15,37 @@ use crate::{
     Error, Result,
 };
 
+pub(crate) struct DatagramSocketRuntime<P>
+where
+    P: DatagramRuntimePipeline,
+{
+    pub id: u64,
+    pub socket: UdpSocket,
+    pub pipeline: P,
+    pub config: UdpSocketConfig,
+    pub channel: DatagramChannel<P::Write>,
+    pub rx: mpsc::Receiver<DatagramCommand<P::Write>>,
+    pub shutdown_rx: Option<watch::Receiver<bool>>,
+}
+
 pub(crate) async fn run_datagram_socket_with_life<P, L>(
-    id: u64,
-    socket: UdpSocket,
-    mut pipeline: P,
-    config: UdpSocketConfig,
-    channel: DatagramChannel<P::Write>,
-    mut rx: mpsc::Receiver<DatagramCommand<P::Write>>,
+    runtime: DatagramSocketRuntime<P>,
     life: L,
 ) -> Result<()>
 where
     P: DatagramRuntimePipeline,
     L: Life,
 {
+    let DatagramSocketRuntime {
+        id,
+        socket,
+        mut pipeline,
+        config,
+        channel,
+        mut rx,
+        mut shutdown_rx,
+    } = runtime;
+
     let local_addr = socket.local_addr()?;
     let mut read_buf = vec![0_u8; config.read_buffer_capacity.max(1)];
     let mut write_buf = BytesMut::with_capacity(config.write_buffer_capacity);
@@ -33,6 +54,10 @@ where
 
     let result: Result<()> = async {
         loop {
+            if shutdown_requested(&shutdown_rx) {
+                break;
+            }
+
             tokio::select! {
                 read = socket.recv_from(&mut read_buf) => {
                     let (read_len, peer_addr) = read?;
@@ -86,6 +111,10 @@ where
                         }
                     }
                 }
+
+                _ = wait_for_shutdown(&mut shutdown_rx) => {
+                    break;
+                }
             }
         }
 
@@ -107,6 +136,21 @@ where
             Err(err)
         }
     }
+}
+
+fn shutdown_requested(shutdown_rx: &Option<watch::Receiver<bool>>) -> bool {
+    shutdown_rx
+        .as_ref()
+        .is_some_and(|shutdown_rx| *shutdown_rx.borrow())
+}
+
+async fn wait_for_shutdown(shutdown_rx: &mut Option<watch::Receiver<bool>>) {
+    let Some(shutdown_rx) = shutdown_rx else {
+        future::pending::<()>().await;
+        return;
+    };
+
+    let _ = shutdown_rx.changed().await;
 }
 
 async fn drain_pending_writes<P>(

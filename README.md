@@ -142,6 +142,18 @@ TcpServer::bind("127.0.0.1:9000")
     .await
 ```
 
+Servers also support an external shutdown handle:
+
+```rust
+let server = TcpServer::bind("127.0.0.1:9000")
+    .pipeline(|| pipeline().codec(LineCodec::new()).handler(MyHandler))
+    .start()
+    .await?;
+
+server.shutdown();
+server.wait().await?;
+```
+
 ## Built-In Codecs
 
 Stream codecs use Netty-style names:

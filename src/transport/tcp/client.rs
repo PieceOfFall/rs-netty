@@ -130,6 +130,7 @@ impl<F, L> TcpClient<F, L> {
                     config,
                     channel: connection_channel,
                     rx,
+                    shutdown_rx: None,
                 },
                 life,
             )

@@ -1,10 +1,10 @@
-use std::net::SocketAddr;
+use std::{future, net::SocketAddr};
 
 use bytes::BytesMut;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
-    sync::mpsc,
+    sync::{mpsc, watch},
 };
 
 use crate::{
@@ -28,6 +28,7 @@ where
     pub config: TcpConnectionConfig,
     pub channel: Channel<P::Write>,
     pub rx: mpsc::Receiver<StreamCommand<P::Write>>,
+    pub shutdown_rx: Option<watch::Receiver<bool>>,
 }
 
 pub(crate) async fn run_stream_connection_with_life<P, L>(
@@ -79,6 +80,7 @@ where
         config,
         channel,
         mut rx,
+        mut shutdown_rx,
     } = connection;
 
     let info = ConnInfo::new(id, peer_addr, local_addr);
@@ -92,6 +94,10 @@ where
     let mut write_buf = BytesMut::with_capacity(config.write_buffer_capacity);
 
     loop {
+        if shutdown_requested(&shutdown_rx) {
+            break;
+        }
+
         tokio::select! {
             read = stream.read_buf(&mut read_buf) => {
                 let read_len = read?;
@@ -141,10 +147,29 @@ where
                     }
                 }
             }
+
+            _ = wait_for_shutdown(&mut shutdown_rx) => {
+                break;
+            }
         }
     }
 
     Ok(())
+}
+
+fn shutdown_requested(shutdown_rx: &Option<watch::Receiver<bool>>) -> bool {
+    shutdown_rx
+        .as_ref()
+        .is_some_and(|shutdown_rx| *shutdown_rx.borrow())
+}
+
+async fn wait_for_shutdown(shutdown_rx: &mut Option<watch::Receiver<bool>>) {
+    let Some(shutdown_rx) = shutdown_rx else {
+        future::pending::<()>().await;
+        return;
+    };
+
+    let _ = shutdown_rx.changed().await;
 }
 
 async fn drain_pending_writes<P>(

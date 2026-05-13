@@ -8,7 +8,10 @@ use crate::{
     pipeline::{
         datagram::builder::IntoDatagramPipeline, datagram::runtime::DatagramRuntimePipeline,
     },
-    transport::udp::{config::UdpSocketConfig, socket::run_datagram_socket_with_life},
+    transport::udp::{
+        config::UdpSocketConfig,
+        socket::{run_datagram_socket_with_life, DatagramSocketRuntime},
+    },
     Result,
 };
 
@@ -107,8 +110,19 @@ impl<F, L> UdpClient<F, L> {
         let life = self.life;
 
         let join = tokio::spawn(async move {
-            run_datagram_socket_with_life(1, socket, pipeline, config, socket_channel, rx, life)
-                .await
+            run_datagram_socket_with_life(
+                DatagramSocketRuntime {
+                    id: 1,
+                    socket,
+                    pipeline,
+                    config,
+                    channel: socket_channel,
+                    rx,
+                    shutdown_rx: None,
+                },
+                life,
+            )
+            .await
         });
 
         Ok(UdpClientHandle {

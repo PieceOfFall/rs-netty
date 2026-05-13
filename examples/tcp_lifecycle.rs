@@ -6,11 +6,18 @@ use rs_netty::{
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    TcpServer::bind("127.0.0.1:9003")
+    let server = TcpServer::bind("127.0.0.1:9003")
         .pipeline(|| pipeline().codec(LineCodec::new()).handler(Echo))
         .life(PrintLife)
-        .run()
-        .await
+        .start()
+        .await?;
+
+    println!("listening on {}", server.local_addr());
+    println!("press Ctrl+C to shutdown gracefully");
+
+    tokio::signal::ctrl_c().await?;
+    server.shutdown();
+    server.wait().await
 }
 
 #[derive(Clone, Copy)]
