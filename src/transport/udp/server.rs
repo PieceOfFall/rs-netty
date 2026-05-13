@@ -69,6 +69,7 @@ impl<F, L> UdpServer<F, L> {
 
     pub fn read_buffer_capacity(mut self, value: usize) -> Self {
         self.config.read_buffer_capacity = value;
+        self.config.normalize();
         self
     }
 
@@ -79,6 +80,7 @@ impl<F, L> UdpServer<F, L> {
 
     pub fn max_datagram_size(mut self, value: usize) -> Self {
         self.config.max_datagram_size = value;
+        self.config.normalize();
         self
     }
 
@@ -97,7 +99,8 @@ impl<F, L> UdpServer<F, L> {
         let socket = UdpSocket::bind(&self.addr).await?;
         let local_addr = socket.local_addr()?;
         let pipeline = (self.pipeline_factory)().into_datagram_pipeline();
-        let config = self.config;
+        let mut config = self.config;
+        config.normalize();
         let (tx, rx) = mpsc::channel::<DatagramCommand<P::Write>>(config.outbound_queue_size);
         let channel = DatagramChannel::new(1, local_addr, tx);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);

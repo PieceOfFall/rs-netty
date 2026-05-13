@@ -47,7 +47,11 @@ where
     } = runtime;
 
     let local_addr = socket.local_addr()?;
-    let mut read_buf = vec![0_u8; config.read_buffer_capacity.max(1)];
+    let read_buffer_capacity = config
+        .read_buffer_capacity
+        .max(config.max_datagram_size)
+        .max(1);
+    let mut read_buf = vec![0_u8; read_buffer_capacity];
     let mut write_buf = BytesMut::with_capacity(config.write_buffer_capacity);
 
     life.udp_socket_started(local_addr).await?;

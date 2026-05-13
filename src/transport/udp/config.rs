@@ -6,6 +6,13 @@ pub struct UdpSocketConfig {
     pub outbound_queue_size: usize,
 }
 
+impl UdpSocketConfig {
+    pub(crate) fn normalize(&mut self) {
+        self.max_datagram_size = self.max_datagram_size.max(1);
+        self.read_buffer_capacity = self.read_buffer_capacity.max(self.max_datagram_size).max(1);
+    }
+}
+
 impl Default for UdpSocketConfig {
     fn default() -> Self {
         Self {
