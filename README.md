@@ -166,6 +166,7 @@ Datagram codecs:
 cargo run --example tcp_echo_server
 cargo run --example tcp_echo_client
 cargo run --example tcp_typed_chain
+cargo run --example tcp_lifecycle
 cargo run --example udp_echo_server
 cargo run --example udp_echo_client
 cargo run --example udp_typed_chain
