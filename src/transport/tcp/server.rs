@@ -24,11 +24,15 @@ use crate::{
     Result,
 };
 
+/// Configuration type shared by TCP servers and TCP client connections.
 pub type TcpServerConfig = TcpConnectionConfig;
+/// Backwards-compatible alias for [`TcpServerConfig`].
 pub type ServerConfig = TcpConnectionConfig;
 
+/// Marker used before a TCP server pipeline has been configured.
 pub struct NoPipeline;
 
+/// Builder for a TCP server.
 pub struct TcpServer<F = NoPipeline, L = NoLife> {
     addr: String,
     pipeline_factory: F,
@@ -37,6 +41,7 @@ pub struct TcpServer<F = NoPipeline, L = NoLife> {
 }
 
 impl TcpServer<NoPipeline, NoLife> {
+    /// Creates a TCP server builder bound to the provided address.
     pub fn bind(addr: impl Into<String>) -> Self {
         Self {
             addr: addr.into(),
@@ -48,6 +53,9 @@ impl TcpServer<NoPipeline, NoLife> {
 }
 
 impl<L> TcpServer<NoPipeline, L> {
+    /// Sets the per-connection pipeline factory.
+    ///
+    /// The factory is called once per accepted connection.
     pub fn pipeline<F, B, P>(self, factory: F) -> TcpServer<F, L>
     where
         F: Fn() -> B + Clone + Send + Sync + 'static,
@@ -64,6 +72,7 @@ impl<L> TcpServer<NoPipeline, L> {
 }
 
 impl<F, L> TcpServer<F, L> {
+    /// Attaches lifecycle hooks.
     pub fn life<NextLife>(self, life: NextLife) -> TcpServer<F, NextLife> {
         TcpServer {
             addr: self.addr,
@@ -73,41 +82,49 @@ impl<F, L> TcpServer<F, L> {
         }
     }
 
+    /// Sets the initial TCP read buffer capacity.
     pub fn read_buffer_capacity(mut self, value: usize) -> Self {
         self.config.read_buffer_capacity = value;
         self
     }
 
+    /// Sets the initial TCP write buffer capacity.
     pub fn write_buffer_capacity(mut self, value: usize) -> Self {
         self.config.write_buffer_capacity = value;
         self
     }
 
+    /// Sets the maximum buffered frame size before the connection is closed.
     pub fn max_frame_size(mut self, value: usize) -> Self {
         self.config.max_frame_size = value;
         self
     }
 
+    /// Sets the bounded outbound command queue size.
     pub fn outbound_queue_size(mut self, value: usize) -> Self {
         self.config.outbound_queue_size = value.max(1);
         self
     }
 
+    /// Enables or disables `TCP_NODELAY`.
     pub fn tcp_nodelay(mut self, value: bool) -> Self {
         self.config.tcp_nodelay = value;
         self
     }
 
+    /// Closes idle connections after the provided duration.
     pub fn idle_timeout(mut self, value: Duration) -> Self {
         self.config.idle_timeout = Some(value);
         self
     }
 
+    /// Enables per-connection byte/frame counters.
     pub fn track_connection_stats(mut self) -> Self {
         self.config.track_connection_stats = true;
         self
     }
 
+    /// Starts the server in a background task and returns a shutdown handle.
     pub async fn start<B, P>(self) -> Result<TcpServerHandle>
     where
         F: Fn() -> B + Clone + Send + Sync + 'static,
@@ -144,6 +161,7 @@ impl<F, L> TcpServer<F, L> {
         })
     }
 
+    /// Starts the server and waits for it to stop.
     pub async fn run<B, P>(self) -> Result<()>
     where
         F: Fn() -> B + Clone + Send + Sync + 'static,
@@ -155,6 +173,7 @@ impl<F, L> TcpServer<F, L> {
     }
 }
 
+/// Handle returned by [`TcpServer::start`].
 pub struct TcpServerHandle {
     local_addr: SocketAddr,
     shutdown_tx: watch::Sender<bool>,
@@ -162,16 +181,19 @@ pub struct TcpServerHandle {
 }
 
 impl TcpServerHandle {
+    /// Local address the server is bound to.
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }
 
+    /// Requests graceful server shutdown.
     pub fn shutdown(&self) {
         if !*self.shutdown_tx.borrow() {
             let _ = self.shutdown_tx.send(true);
         }
     }
 
+    /// Waits for the server task to finish.
     pub async fn wait(self) -> Result<()> {
         self.join.await?
     }

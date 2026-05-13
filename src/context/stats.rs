@@ -6,6 +6,10 @@ use std::{
     time::Instant,
 };
 
+/// Snapshot handle for per-connection counters.
+///
+/// Cloning this handle is cheap. Counter reads use relaxed atomics and are
+/// intended for monitoring, not synchronization.
 #[derive(Clone)]
 pub struct ConnectionStats {
     inner: Arc<ConnectionStatsInner>,
@@ -32,22 +36,27 @@ impl ConnectionStats {
         }
     }
 
+    /// Instant when the connection stats were created.
     pub fn connected_at(&self) -> Instant {
         self.inner.connected_at
     }
 
+    /// Total bytes read from the socket.
     pub fn bytes_read(&self) -> u64 {
         self.inner.bytes_read.load(Ordering::Relaxed)
     }
 
+    /// Total bytes written to the socket.
     pub fn bytes_written(&self) -> u64 {
         self.inner.bytes_written.load(Ordering::Relaxed)
     }
 
+    /// Total decoded frames.
     pub fn frames_read(&self) -> u64 {
         self.inner.frames_read.load(Ordering::Relaxed)
     }
 
+    /// Total encoded frames.
     pub fn frames_written(&self) -> u64 {
         self.inner.frames_written.load(Ordering::Relaxed)
     }

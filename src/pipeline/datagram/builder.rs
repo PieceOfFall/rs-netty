@@ -14,6 +14,10 @@ use crate::{
 
 pub struct Missing;
 
+/// Starts a typed UDP datagram pipeline builder.
+///
+/// The builder encodes legal pipeline order in its type parameters. Methods
+/// become available only when the previous required stage has been supplied.
 pub fn datagram_pipeline(
 ) -> DatagramPipelineBuilder<Start, Missing, Identity, Identity, Missing, Identity, (), (), ()> {
     DatagramPipelineBuilder {
@@ -26,6 +30,10 @@ pub fn datagram_pipeline(
     }
 }
 
+/// Typed UDP datagram pipeline builder.
+///
+/// Most type parameters are implementation details used to track the current
+/// build phase and the message type at each pipeline boundary.
 pub struct DatagramPipelineBuilder<State, C, InP, BizP, H, OutP, CurrentIn, Write, CurrentOut> {
     pub(crate) codec: C,
     pub(crate) inbound: InP,
@@ -36,6 +44,7 @@ pub struct DatagramPipelineBuilder<State, C, InP, BizP, H, OutP, CurrentIn, Writ
 }
 
 impl DatagramPipelineBuilder<Start, Missing, Identity, Identity, Missing, Identity, (), (), ()> {
+    /// Adds the datagram codec and enters the inbound phase.
     pub fn codec<C>(
         self,
         codec: C,
@@ -71,6 +80,11 @@ where
     InP: InboundPipe<C::Item, Out = CurrentIn>,
     CurrentIn: Send + 'static,
 {
+    /// Adds an inbound transformation stage.
+    #[allow(
+        clippy::type_complexity,
+        reason = "The builder's return type intentionally carries pipeline state and message types for compile-time API validation."
+    )]
     pub fn inbound<H>(
         self,
         handler: H,
@@ -98,6 +112,11 @@ where
         }
     }
 
+    /// Adds the first business transformation stage.
+    #[allow(
+        clippy::type_complexity,
+        reason = "The builder's return type intentionally carries pipeline state and message types for compile-time API validation."
+    )]
     pub fn business<B>(
         self,
         business: B,
@@ -125,6 +144,7 @@ where
         }
     }
 
+    /// Adds the final datagram handler and enters the ready/outbound phase.
     pub fn handler<H>(
         self,
         handler: H,
@@ -151,6 +171,11 @@ where
     BizP: BusinessPipe<InP::Out, Out = CurrentIn>,
     CurrentIn: Send + 'static,
 {
+    /// Adds another business transformation stage.
+    #[allow(
+        clippy::type_complexity,
+        reason = "The builder's return type intentionally carries pipeline state and message types for compile-time API validation."
+    )]
     pub fn business<B>(
         self,
         business: B,
@@ -178,6 +203,7 @@ where
         }
     }
 
+    /// Adds the final datagram handler and enters the ready/outbound phase.
     pub fn handler<H>(
         self,
         handler: H,
@@ -201,6 +227,11 @@ impl<C, InP, BizP, H, OutP, CurrentIn, Write, CurrentOut>
 where
     CurrentOut: Send + 'static,
 {
+    /// Adds an outbound transformation stage.
+    #[allow(
+        clippy::type_complexity,
+        reason = "The builder's return type intentionally carries pipeline state and message types for compile-time API validation."
+    )]
     pub fn outbound<O>(
         self,
         outbound: O,
@@ -220,8 +251,10 @@ where
 }
 
 pub trait IntoDatagramPipeline {
+    /// Concrete runtime pipeline produced by this builder.
     type Pipeline;
 
+    /// Converts the builder into its runtime pipeline.
     fn into_datagram_pipeline(self) -> Self::Pipeline;
 }
 

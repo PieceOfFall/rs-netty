@@ -4,6 +4,10 @@ use tokio::sync::mpsc;
 
 use crate::{channel::command::DatagramCommand, Error, Result};
 
+/// Handle for writing UDP datagrams through one socket pipeline.
+///
+/// Cloning a channel is cheap. Sends are routed through a bounded Tokio mpsc
+/// queue owned by the socket task.
 pub struct DatagramChannel<W> {
     id: u64,
     local_addr: SocketAddr,
@@ -33,22 +37,27 @@ impl<W: Send + 'static> DatagramChannel<W> {
         self.id
     }
 
+    /// Local socket address.
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }
 
+    /// Returns whether the socket task has closed its command queue.
     pub fn is_closed(&self) -> bool {
         self.tx.is_closed()
     }
 
+    /// Remaining outbound queue capacity.
     pub fn capacity(&self) -> usize {
         self.tx.capacity()
     }
 
+    /// Configured outbound queue capacity.
     pub fn max_capacity(&self) -> usize {
         self.tx.max_capacity()
     }
 
+    /// Queues a datagram for an explicit peer.
     pub async fn write_to(&self, peer_addr: SocketAddr, msg: W) -> Result<()> {
         self.tx
             .send(DatagramCommand::WriteTo(peer_addr, msg))
@@ -56,6 +65,7 @@ impl<W: Send + 'static> DatagramChannel<W> {
             .map_err(|_| Error::ChannelClosed)
     }
 
+    /// Queues a datagram and waits until the socket task has sent it.
     pub async fn write_to_and_flush(&self, peer_addr: SocketAddr, msg: W) -> Result<()> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.tx
@@ -65,6 +75,7 @@ impl<W: Send + 'static> DatagramChannel<W> {
         rx.await.map_err(|_| Error::ChannelClosed)?
     }
 
+    /// Requests local socket shutdown.
     pub async fn close(&self) -> Result<()> {
         self.tx
             .send(DatagramCommand::Close)

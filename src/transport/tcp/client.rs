@@ -17,10 +17,13 @@ use crate::{
     Result,
 };
 
+/// Configuration type shared by TCP clients and TCP server connections.
 pub type TcpClientConfig = TcpConnectionConfig;
 
+/// Marker used before a TCP client pipeline has been configured.
 pub struct NoPipeline;
 
+/// Builder for a TCP client connection.
 pub struct TcpClient<F = NoPipeline, L = NoLife> {
     remote_addr: String,
     local_addr: Option<String>,
@@ -30,6 +33,7 @@ pub struct TcpClient<F = NoPipeline, L = NoLife> {
 }
 
 impl TcpClient<NoPipeline, NoLife> {
+    /// Creates a TCP client builder for a remote socket address.
     pub fn connect(remote_addr: impl Into<String>) -> Self {
         Self {
             remote_addr: remote_addr.into(),
@@ -42,6 +46,7 @@ impl TcpClient<NoPipeline, NoLife> {
 }
 
 impl<L> TcpClient<NoPipeline, L> {
+    /// Sets the connection pipeline factory.
     pub fn pipeline<F, B, P>(self, factory: F) -> TcpClient<F, L>
     where
         F: Fn() -> B + Clone + Send + Sync + 'static,
@@ -59,6 +64,7 @@ impl<L> TcpClient<NoPipeline, L> {
 }
 
 impl<F, L> TcpClient<F, L> {
+    /// Attaches lifecycle hooks.
     pub fn life<NextLife>(self, life: NextLife) -> TcpClient<F, NextLife> {
         TcpClient {
             remote_addr: self.remote_addr,
@@ -69,46 +75,55 @@ impl<F, L> TcpClient<F, L> {
         }
     }
 
+    /// Binds the outgoing socket to a local address before connecting.
     pub fn bind(mut self, local_addr: impl Into<String>) -> Self {
         self.local_addr = Some(local_addr.into());
         self
     }
 
+    /// Sets the initial TCP read buffer capacity.
     pub fn read_buffer_capacity(mut self, value: usize) -> Self {
         self.config.read_buffer_capacity = value;
         self
     }
 
+    /// Sets the initial TCP write buffer capacity.
     pub fn write_buffer_capacity(mut self, value: usize) -> Self {
         self.config.write_buffer_capacity = value;
         self
     }
 
+    /// Sets the maximum buffered frame size before the connection is closed.
     pub fn max_frame_size(mut self, value: usize) -> Self {
         self.config.max_frame_size = value;
         self
     }
 
+    /// Sets the bounded outbound command queue size.
     pub fn outbound_queue_size(mut self, value: usize) -> Self {
         self.config.outbound_queue_size = value.max(1);
         self
     }
 
+    /// Enables or disables `TCP_NODELAY`.
     pub fn tcp_nodelay(mut self, value: bool) -> Self {
         self.config.tcp_nodelay = value;
         self
     }
 
+    /// Closes the connection after the provided idle duration.
     pub fn idle_timeout(mut self, value: Duration) -> Self {
         self.config.idle_timeout = Some(value);
         self
     }
 
+    /// Enables byte/frame counters for this connection.
     pub fn track_connection_stats(mut self) -> Self {
         self.config.track_connection_stats = true;
         self
     }
 
+    /// Connects, starts the connection task, and returns a client handle.
     pub async fn run<B, P>(self) -> Result<TcpClientHandle<P::Write>>
     where
         F: Fn() -> B + Clone + Send + Sync + 'static,
@@ -155,28 +170,34 @@ impl<F, L> TcpClient<F, L> {
     }
 }
 
+/// Handle for an active TCP client connection.
 pub struct TcpClientHandle<W> {
     channel: Channel<W>,
     join: JoinHandle<Result<()>>,
 }
 
 impl<W: Send + 'static> TcpClientHandle<W> {
+    /// Returns the underlying cloneable channel.
     pub fn channel(&self) -> Channel<W> {
         self.channel.clone()
     }
 
+    /// Queues a message for the connection task.
     pub async fn write(&self, msg: W) -> Result<()> {
         self.channel.write(msg).await
     }
 
+    /// Queues a message and waits until it has been flushed.
     pub async fn write_and_flush(&self, msg: W) -> Result<()> {
         self.channel.write_and_flush(msg).await
     }
 
+    /// Requests local connection shutdown.
     pub async fn close(&self) -> Result<()> {
         self.channel.close().await
     }
 
+    /// Waits for the connection task to finish.
     pub async fn wait(self) -> Result<()> {
         self.join.await?
     }

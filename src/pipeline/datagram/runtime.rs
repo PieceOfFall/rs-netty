@@ -18,6 +18,10 @@ use crate::{
     Result,
 };
 
+/// Runtime representation of a typed UDP datagram pipeline.
+///
+/// Applications normally construct this through [`crate::datagram_pipeline()`]
+/// instead of naming the type directly.
 pub struct DatagramPipeline<C, InP, BizP, H, OutP, CurrentIn, Write, CurrentOut> {
     codec: C,
     inbound: InP,
@@ -42,12 +46,21 @@ impl<C, InP, BizP, H, OutP, CurrentIn, Write, CurrentOut>
     }
 }
 
+/// Internal runtime contract for UDP datagram pipelines.
+///
+/// This trait is public so typed builders can appear in public bounds, but most
+/// users should implement [`crate::DatagramHandler`], [`crate::Inbound`],
+/// [`crate::Business`], and [`crate::Outbound`] instead.
 pub trait DatagramRuntimePipeline: Send + 'static {
+    /// Application write type accepted by the datagram channel/context.
     type Write: Send + 'static;
+    /// Type produced by the datagram decoder.
     type Decoded: Send + 'static;
 
+    /// Decodes one received datagram.
     fn decode_datagram(&mut self, src: &[u8]) -> Result<Self::Decoded>;
 
+    /// Processes one decoded datagram without eager flush support.
     fn process_inbound<'ctx>(
         &'ctx mut self,
         inbound_ctx: &'ctx mut InboundContext,
@@ -56,6 +69,11 @@ pub trait DatagramRuntimePipeline: Send + 'static {
         msg: Self::Decoded,
     ) -> impl Future<Output = Result<()>> + Send + 'ctx;
 
+    /// Processes one decoded datagram and supports handler-local flushes.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "The runtime deliberately passes split mutable state to avoid bundling socket, buffers, and contexts into a broad mutable facade."
+    )]
     fn process_inbound_flushable<'ctx>(
         &'ctx mut self,
         inbound_ctx: &'ctx mut InboundContext,
@@ -67,6 +85,7 @@ pub trait DatagramRuntimePipeline: Send + 'static {
         msg: Self::Decoded,
     ) -> impl Future<Output = Result<()>> + Send + 'ctx;
 
+    /// Runs the outbound stages and encodes one application write.
     fn process_outbound<'ctx>(
         &'ctx mut self,
         outbound_ctx: &'ctx mut OutboundContext,
@@ -115,6 +134,10 @@ where
         self.handler.read(ctx, msg).await
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "The runtime deliberately passes split mutable state to avoid bundling socket, buffers, and contexts into a broad mutable facade."
+    )]
     async fn process_inbound_flushable(
         &mut self,
         inbound_ctx: &mut InboundContext,
@@ -165,6 +188,10 @@ where
             }
         };
 
+        #[allow(
+            clippy::drop_non_drop,
+            reason = "This explicit drop marks the end of the pinned handler borrow before draining the outbox."
+        )]
         drop(handler);
 
         drain_datagram_outbox(

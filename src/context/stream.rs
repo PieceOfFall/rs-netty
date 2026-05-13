@@ -15,6 +15,9 @@ use crate::{
     Result,
 };
 
+/// Context passed to TCP/UDP inbound transformation stages.
+///
+/// It exposes connection/datagram identity but does not allow writes.
 pub struct InboundContext {
     info: DatagramInfo,
 }
@@ -43,6 +46,7 @@ impl InboundContext {
     }
 }
 
+/// Context passed to business transformation stages.
 pub struct BusinessContext {
     info: DatagramInfo,
 }
@@ -71,6 +75,7 @@ impl BusinessContext {
     }
 }
 
+/// Context passed to outbound transformation stages.
 pub struct OutboundContext {
     info: DatagramInfo,
 }
@@ -99,6 +104,11 @@ impl OutboundContext {
     }
 }
 
+/// Context passed to a TCP [`crate::Handler`].
+///
+/// Writes through this context are staged in a handler-local outbox. They are
+/// flushed when the handler returns, or earlier when [`Self::flush`] or
+/// [`Self::write_and_flush`] is awaited.
 pub struct Context<W> {
     info: ConnInfo,
     channel: Channel<W>,
@@ -120,37 +130,48 @@ impl<W: Send + 'static> Context<W> {
         self.info.id()
     }
 
+    /// Remote peer address for this connection.
     pub fn peer_addr(&self) -> SocketAddr {
         self.info.peer_addr()
     }
 
+    /// Local socket address for this connection.
     pub fn local_addr(&self) -> SocketAddr {
         self.info.local_addr()
     }
 
+    /// Returns a cloneable channel for writing from outside the current handler.
     pub fn channel(&self) -> Channel<W> {
         self.channel.clone()
     }
 
+    /// Connection stats when tracking was enabled on the server/client.
     pub fn stats(&self) -> Option<ConnectionStats> {
         self.channel.stats()
     }
 
+    /// Stages a message for outbound processing.
+    ///
+    /// The message is not written to the socket until the handler returns or
+    /// the outbox is explicitly flushed.
     pub async fn write(&mut self, msg: W) -> Result<()> {
         self.outbox.push_write(msg);
         Ok(())
     }
 
+    /// Flushes messages staged by this handler so far.
     pub async fn flush(&mut self) -> Result<()> {
         let rx = self.outbox.push_flush();
         rx.await.unwrap_or(Err(crate::Error::ChannelClosed))
     }
 
+    /// Stages a message and waits for the staged outbox to flush.
     pub async fn write_and_flush(&mut self, msg: W) -> Result<()> {
         self.outbox.push_write(msg);
         self.flush().await
     }
 
+    /// Requests that the connection close after the current handler returns.
     pub async fn close(&mut self) -> Result<()> {
         self.close_requested = true;
         Ok(())

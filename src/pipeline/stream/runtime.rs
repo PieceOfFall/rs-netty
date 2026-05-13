@@ -18,6 +18,10 @@ use crate::{
     Error, Result,
 };
 
+/// Runtime representation of a typed TCP stream pipeline.
+///
+/// Applications normally construct this through [`crate::pipeline()`] instead
+/// of naming the type directly.
 pub struct StreamPipeline<C, InP, BizP, H, OutP, CurrentIn, Write, CurrentOut> {
     codec: C,
     inbound: InP,
@@ -45,12 +49,21 @@ impl<C, InP, BizP, H, OutP, CurrentIn, Write, CurrentOut>
     }
 }
 
+/// Internal runtime contract for TCP stream pipelines.
+///
+/// This trait is public so typed builders can appear in public bounds, but most
+/// users should implement [`crate::Handler`], [`crate::Inbound`],
+/// [`crate::Business`], and [`crate::Outbound`] instead.
 pub trait StreamRuntimePipeline: Send + 'static {
+    /// Application write type accepted by the channel/context.
     type Write: Send + 'static;
+    /// Type produced by the stream decoder.
     type Decoded: Send + 'static;
 
+    /// Attempts to decode one frame from the read buffer.
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Decoded>>;
 
+    /// Processes one decoded inbound frame without eager flush support.
     fn process_inbound<'ctx>(
         &'ctx mut self,
         inbound_ctx: &'ctx mut InboundContext,
@@ -59,6 +72,11 @@ pub trait StreamRuntimePipeline: Send + 'static {
         msg: Self::Decoded,
     ) -> impl Future<Output = Result<()>> + Send + 'ctx;
 
+    /// Processes one decoded inbound frame and supports handler-local flushes.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "The runtime deliberately passes split mutable state to avoid bundling transport, buffers, contexts, and stats into a broad mutable facade."
+    )]
     fn process_inbound_flushable<'ctx>(
         &'ctx mut self,
         inbound_ctx: &'ctx mut InboundContext,
@@ -71,6 +89,7 @@ pub trait StreamRuntimePipeline: Send + 'static {
         msg: Self::Decoded,
     ) -> impl Future<Output = Result<()>> + Send + 'ctx;
 
+    /// Runs the outbound stages and encodes one application write.
     fn process_outbound<'ctx>(
         &'ctx mut self,
         outbound_ctx: &'ctx mut OutboundContext,
@@ -79,6 +98,7 @@ pub trait StreamRuntimePipeline: Send + 'static {
     ) -> impl Future<Output = Result<()>> + Send + 'ctx;
 }
 
+/// Backwards-compatible alias trait for stream runtime pipelines.
 pub trait RuntimePipeline: StreamRuntimePipeline {}
 
 impl<T> RuntimePipeline for T where T: StreamRuntimePipeline {}
@@ -123,6 +143,10 @@ where
         self.handler.read(ctx, msg).await
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "The runtime deliberately passes split mutable state to avoid bundling transport, buffers, contexts, and stats into a broad mutable facade."
+    )]
     async fn process_inbound_flushable(
         &mut self,
         inbound_ctx: &mut InboundContext,
@@ -174,6 +198,10 @@ where
             }
         };
 
+        #[allow(
+            clippy::drop_non_drop,
+            reason = "This explicit drop marks the end of the pinned handler borrow before draining the outbox."
+        )]
         drop(handler);
 
         drain_stream_outbox(
@@ -211,6 +239,10 @@ enum HandlerPoll {
     Pending,
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Outbox draining needs transport, codec, outbound stages, context, buffer, stats, and final-flush policy as separate mutable inputs."
+)]
 async fn drain_stream_outbox<C, OutP, Write, CurrentOut>(
     outbox: &StreamOutboxHandle<Write>,
     codec: &mut C,

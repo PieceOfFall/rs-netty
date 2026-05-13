@@ -8,6 +8,11 @@ use tokio::sync::oneshot;
 
 use crate::{channel::DatagramChannel, context::DatagramInfo, Result};
 
+/// Context passed to a UDP [`crate::DatagramHandler`].
+///
+/// Writes through this context are staged in a handler-local outbox. They are
+/// sent when the handler returns, or earlier when [`Self::flush`] or a
+/// `*_and_flush` method is awaited.
 pub struct DatagramContext<W> {
     info: DatagramInfo,
     channel: DatagramChannel<W>,
@@ -29,43 +34,52 @@ impl<W: Send + 'static> DatagramContext<W> {
         self.info.id()
     }
 
+    /// Peer address for the current datagram.
     pub fn peer_addr(&self) -> SocketAddr {
         self.info.peer_addr()
     }
 
+    /// Local socket address.
     pub fn local_addr(&self) -> SocketAddr {
         self.info.local_addr()
     }
 
+    /// Returns a cloneable channel for writing from outside the current handler.
     pub fn channel(&self) -> DatagramChannel<W> {
         self.channel.clone()
     }
 
+    /// Stages a response to the current datagram peer.
     pub async fn write(&mut self, msg: W) -> Result<()> {
         self.outbox.push_write(self.info.peer_addr(), msg);
         Ok(())
     }
 
+    /// Stages a datagram for an explicit peer.
     pub async fn write_to(&mut self, peer_addr: SocketAddr, msg: W) -> Result<()> {
         self.outbox.push_write(peer_addr, msg);
         Ok(())
     }
 
+    /// Sends messages staged by this handler so far.
     pub async fn flush(&mut self) -> Result<()> {
         let rx = self.outbox.push_flush();
         rx.await.unwrap_or(Err(crate::Error::ChannelClosed))
     }
 
+    /// Stages a response to the current peer and waits until staged messages are sent.
     pub async fn write_and_flush(&mut self, msg: W) -> Result<()> {
         self.outbox.push_write(self.info.peer_addr(), msg);
         self.flush().await
     }
 
+    /// Stages a datagram for an explicit peer and waits until staged messages are sent.
     pub async fn write_to_and_flush(&mut self, peer_addr: SocketAddr, msg: W) -> Result<()> {
         self.outbox.push_write(peer_addr, msg);
         self.flush().await
     }
 
+    /// Requests that the socket task close after the current handler returns.
     pub async fn close(&mut self) -> Result<()> {
         self.close_requested = true;
         Ok(())

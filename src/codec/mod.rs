@@ -24,22 +24,37 @@ pub use mqtt::{
 };
 pub use utf8_datagram::Utf8DatagramCodec;
 
+/// Decoder for byte-stream transports such as TCP.
+///
+/// Implementations consume bytes from `src` only when they can produce a full
+/// item. Returning `Ok(None)` means more bytes are needed.
 pub trait Decoder: Send + 'static {
+    /// Message type produced by this decoder.
     type Item: Send + 'static;
 
+    /// Attempts to decode one message from the source buffer.
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>>;
 }
 
+/// Encoder for byte-stream transports such as TCP.
 pub trait Encoder<I>: Send + 'static {
+    /// Encodes one item into the destination buffer.
     fn encode(&mut self, item: I, dst: &mut BytesMut) -> Result<()>;
 }
 
+/// Decoder for datagram transports such as UDP.
+///
+/// A datagram decoder receives exactly one datagram at a time.
 pub trait DatagramDecoder: Send + 'static {
+    /// Message type produced by this decoder.
     type Item: Send + 'static;
 
+    /// Decodes one datagram payload.
     fn decode_datagram(&mut self, src: &[u8]) -> Result<Self::Item>;
 }
 
+/// Encoder for datagram transports such as UDP.
 pub trait DatagramEncoder<I>: Send + 'static {
+    /// Encodes one datagram payload into the destination buffer.
     fn encode_datagram(&mut self, item: I, dst: &mut BytesMut) -> Result<()>;
 }

@@ -1,8 +1,13 @@
+/// UDP socket runtime configuration.
 #[derive(Clone)]
 pub struct UdpSocketConfig {
+    /// Receive buffer size used by the socket task.
     pub read_buffer_capacity: usize,
+    /// Initial write buffer capacity.
     pub write_buffer_capacity: usize,
+    /// Maximum accepted datagram payload size.
     pub max_datagram_size: usize,
+    /// Bounded outbound command queue size.
     pub outbound_queue_size: usize,
 }
 
