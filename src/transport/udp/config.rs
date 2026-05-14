@@ -1,13 +1,21 @@
 /// UDP socket runtime configuration.
 #[derive(Clone)]
 pub struct UdpSocketConfig {
-    /// Receive buffer size used by the socket task.
+    /// Receive buffer size in bytes used by the socket task.
+    ///
+    /// The runtime normalizes this to at least [`Self::max_datagram_size`] so a
+    /// configured maximum datagram can fit in the receive buffer.
     pub read_buffer_capacity: usize,
-    /// Initial write buffer capacity.
+    /// Initial write buffer capacity in bytes.
     pub write_buffer_capacity: usize,
-    /// Maximum accepted datagram payload size.
+    /// Maximum accepted datagram payload size in bytes.
+    ///
+    /// Oversized datagrams are rejected before the datagram pipeline runs.
     pub max_datagram_size: usize,
-    /// Bounded outbound command queue size.
+    /// Bounded outbound command queue size for writes sent through channels.
+    ///
+    /// Calls such as [`crate::DatagramChannel::write_to`] wait for capacity
+    /// when this queue is full.
     pub outbound_queue_size: usize,
 }
 

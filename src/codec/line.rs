@@ -5,17 +5,23 @@ use crate::{
     Error, Result,
 };
 
+/// UTF-8 line codec for newline-delimited TCP streams.
+///
+/// Decoding returns one line at a time, strips the trailing `\n`, and also
+/// strips a preceding `\r` for CRLF input. Encoding appends `\n`.
 pub struct LineCodec {
     max_line_len: usize,
 }
 
 impl LineCodec {
+    /// Creates a line codec with an 8 KiB maximum line length.
     pub fn new() -> Self {
         Self {
             max_line_len: 8 * 1024,
         }
     }
 
+    /// Creates a line codec with a custom maximum decoded line length in bytes.
     pub fn with_max_line_len(max_line_len: usize) -> Self {
         Self { max_line_len }
     }

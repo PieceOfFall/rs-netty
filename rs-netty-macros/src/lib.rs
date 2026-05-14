@@ -8,18 +8,58 @@ use syn::{
     PathArguments, ReturnType, Token, Type,
 };
 
-/// Adapts an async function into an `rs_netty::Handler` implementation.
+/// Adapts an async function into TCP and UDP handler implementations.
 ///
-/// The MVP form expects a user-declared handler type and an async function with
-/// one inbound message argument:
+/// The attribute is intended for simple final handlers whose logic fits in an
+/// async function. The handler type is still declared by the user, which keeps
+/// IDE navigation and type names explicit, while the macro generates the
+/// repetitive `Handler` and `DatagramHandler` impls.
+///
+/// # Request to response handlers
+///
+/// When the function returns `Result<Out>`, the macro sets `type Write = Out`
+/// and writes the returned value through the handler context.
 ///
 /// ```ignore
 /// struct Echo;
 ///
 /// #[handler(Echo)]
-/// async fn echo(req: Request) -> rs_netty::Result<Response> {
-///     Ok(Response { echoed: req.message })
+/// async fn echo(msg: String) -> rs_netty::Result<String> {
+///     Ok(msg)
 /// }
+/// ```
+///
+/// This expands to an implementation roughly equivalent to:
+///
+/// ```ignore
+/// impl rs_netty::Handler<String> for Echo {
+///     type Write = String;
+///
+///     async fn read(
+///         &mut self,
+///         ctx: &mut rs_netty::Context<Self::Write>,
+///         msg: String,
+///     ) -> rs_netty::Result<()> {
+///         let msg = echo(msg).await?;
+///         ctx.write(msg).await
+///     }
+/// }
+/// ```
+///
+/// # Consume-only handlers
+///
+/// When the function returns `Result<()>`, the macro cannot infer
+/// `Handler::Write` from the return type. Use `write = Type` to state what the
+/// connection can write from outside, through `TcpClientHandle::write`,
+/// `write_and_flush`, or the handler context.
+///
+/// ```ignore
+/// struct Request;
+/// struct Response {
+///     message: String,
+/// }
+///
+/// struct PrintResponse;
 ///
 /// #[handler(PrintResponse, write = Request)]
 /// async fn print_response(res: Response) -> rs_netty::Result<()> {
@@ -27,6 +67,38 @@ use syn::{
 ///     Ok(())
 /// }
 /// ```
+///
+/// # Accessing handler state
+///
+/// Add `&mut HandlerType` as the first function argument when the function
+/// needs to mutate fields on the handler value. This is useful for one-shot
+/// notifications, counters, or other per-connection state.
+///
+/// ```ignore
+/// struct Response;
+///
+/// struct WaitForResponse {
+///     done: Option<tokio::sync::oneshot::Sender<()>>,
+/// }
+///
+/// #[handler(WaitForResponse, write = String)]
+/// async fn wait_for_response(
+///     handler: &mut WaitForResponse,
+///     _res: Response,
+/// ) -> rs_netty::Result<()> {
+///     if let Some(done) = handler.done.take() {
+///         let _ = done.send(());
+///     }
+///     Ok(())
+/// }
+/// ```
+///
+/// # When to write the impl by hand
+///
+/// Use a manual `impl Handler` or `impl DatagramHandler` when the handler needs
+/// direct access to `Context`, `DatagramContext`, explicit flush timing,
+/// multiple writes per read, or APIs not represented by the function forms
+/// above.
 #[proc_macro_attribute]
 pub fn handler(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as HandlerArgs);

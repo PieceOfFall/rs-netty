@@ -5,16 +5,25 @@ use crate::{
     Error, Result,
 };
 
+/// Codec for fixed-size binary frames.
+///
+/// Decoding waits until exactly `frame_length` bytes are available and then
+/// returns that chunk. Encoding rejects items whose length does not match the
+/// configured frame length.
 pub struct FixedLengthFrameDecoder {
     frame_length: usize,
 }
 
 impl FixedLengthFrameDecoder {
+    /// Creates a fixed-length frame codec.
+    ///
+    /// Panics if `frame_length` is zero.
     pub fn new(frame_length: usize) -> Self {
         assert!(frame_length > 0, "frame_length must be greater than zero");
         Self { frame_length }
     }
 
+    /// Returns the exact frame length in bytes.
     pub fn frame_length(&self) -> usize {
         self.frame_length
     }

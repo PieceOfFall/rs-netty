@@ -8,10 +8,14 @@ use crate::{
 const MQTT_LEVEL_5: u8 = 5;
 const MAX_REMAINING_LENGTH: usize = 268_435_455;
 
+/// MQTT Quality of Service level.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum QoS {
+    /// QoS 0: deliver at most once, with no acknowledgement flow.
     AtMostOnce,
+    /// QoS 1: deliver at least once, acknowledged with PUBACK.
     AtLeastOnce,
+    /// QoS 2: deliver exactly once, using the PUBREC/PUBREL/PUBCOMP flow.
     ExactlyOnce,
 }
 
@@ -34,6 +38,7 @@ impl QoS {
     }
 }
 
+/// MQTT 5 control packet decoded or encoded by [`MqttCodec`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum MqttPacket {
     Connect(ConnectPacket),
@@ -53,17 +58,22 @@ pub enum MqttPacket {
     Auth(AuthPacket),
 }
 
+/// MQTT 5 CONNECT packet.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConnectPacket {
+    /// Whether the server should start a fresh session.
     pub clean_start: bool,
+    /// Keep-alive interval in seconds.
     pub keep_alive: u16,
     pub properties: Vec<MqttProperty>,
     pub client_id: String,
+    /// Optional Will Message published by the server if the client disconnects unexpectedly.
     pub will: Option<Will>,
     pub username: Option<String>,
     pub password: Option<Bytes>,
 }
 
+/// MQTT Will Message carried in a CONNECT packet.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Will {
     pub qos: QoS,
@@ -73,32 +83,41 @@ pub struct Will {
     pub payload: Bytes,
 }
 
+/// MQTT 5 CONNACK packet.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConnAckPacket {
+    /// Whether the server resumed an existing session.
     pub session_present: bool,
     pub reason_code: u8,
     pub properties: Vec<MqttProperty>,
 }
 
+/// MQTT 5 PUBLISH packet.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PublishPacket {
+    /// Duplicate delivery flag.
     pub dup: bool,
     pub qos: QoS,
+    /// Whether the message should be retained by the broker.
     pub retain: bool,
     pub topic_name: String,
+    /// Packet identifier for QoS 1/2 publishes.
     pub packet_id: Option<u16>,
     pub properties: Vec<MqttProperty>,
     pub payload: Bytes,
 }
 
+/// Shared packet shape for PUBACK, PUBREC, PUBREL, and PUBCOMP.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AckPacket {
+    /// Non-zero packet identifier.
     pub packet_id: u16,
     pub reason_code: u8,
     pub properties: Vec<MqttProperty>,
 }
 
 impl AckPacket {
+    /// Creates an acknowledgement packet without properties.
     pub fn new(packet_id: u16, reason_code: u8) -> Self {
         Self {
             packet_id,
@@ -108,24 +127,33 @@ impl AckPacket {
     }
 }
 
+/// MQTT 5 SUBSCRIBE packet.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubscribePacket {
+    /// Non-zero packet identifier.
     pub packet_id: u16,
     pub properties: Vec<MqttProperty>,
     pub subscriptions: Vec<Subscription>,
 }
 
+/// One topic filter in a SUBSCRIBE packet.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Subscription {
+    /// Topic filter, for example `sensors/+/temperature`.
     pub topic_filter: String,
     pub options: SubscriptionOptions,
 }
 
+/// Options attached to one MQTT subscription.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SubscriptionOptions {
+    /// Maximum QoS accepted for matching publications.
     pub maximum_qos: QoS,
+    /// Whether messages published by this client should be excluded.
     pub no_local: bool,
+    /// Whether retained messages preserve the original retain flag.
     pub retain_as_published: bool,
+    /// Retain handling mode. Valid values are 0, 1, and 2.
     pub retain_handling: u8,
 }
 
@@ -140,39 +168,52 @@ impl Default for SubscriptionOptions {
     }
 }
 
+/// MQTT 5 SUBACK packet.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubAckPacket {
+    /// Non-zero packet identifier matching the SUBSCRIBE packet.
     pub packet_id: u16,
     pub properties: Vec<MqttProperty>,
+    /// Reason code for each requested subscription.
     pub reason_codes: Vec<u8>,
 }
 
+/// MQTT 5 UNSUBSCRIBE packet.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnsubscribePacket {
+    /// Non-zero packet identifier.
     pub packet_id: u16,
     pub properties: Vec<MqttProperty>,
     pub topic_filters: Vec<String>,
 }
 
+/// MQTT 5 UNSUBACK packet.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnsubAckPacket {
+    /// Non-zero packet identifier matching the UNSUBSCRIBE packet.
     pub packet_id: u16,
     pub properties: Vec<MqttProperty>,
+    /// Reason code for each requested unsubscription.
     pub reason_codes: Vec<u8>,
 }
 
+/// MQTT 5 DISCONNECT packet.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DisconnectPacket {
+    /// Disconnect reason code. The default success code is 0.
     pub reason_code: u8,
     pub properties: Vec<MqttProperty>,
 }
 
+/// MQTT 5 AUTH packet.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AuthPacket {
+    /// Authentication reason code. The default success code is 0.
     pub reason_code: u8,
     pub properties: Vec<MqttProperty>,
 }
 
+/// MQTT 5 property value.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MqttProperty {
     PayloadFormatIndicator(u8),
@@ -197,6 +238,7 @@ pub enum MqttProperty {
     TopicAlias(u16),
     MaximumQoS(u8),
     RetainAvailable(u8),
+    /// User Property key/value pair. Unlike most MQTT properties, this can appear multiple times.
     UserProperty(String, String),
     MaximumPacketSize(u32),
     WildcardSubscriptionAvailable(u8),
@@ -204,17 +246,25 @@ pub enum MqttProperty {
     SharedSubscriptionAvailable(u8),
 }
 
+/// MQTT 5 packet codec for TCP stream pipelines.
+///
+/// The codec handles MQTT fixed headers, Remaining Length framing, MQTT 5
+/// variable byte integers, supported control packet bodies, and MQTT 5
+/// properties. It does not maintain broker/client session state; semantic
+/// validation that depends on connection state belongs in a handler.
 pub struct MqttCodec {
     max_packet_size: usize,
 }
 
 impl MqttCodec {
+    /// Creates a codec that accepts packets up to the MQTT Remaining Length maximum.
     pub fn new() -> Self {
         Self {
             max_packet_size: MAX_REMAINING_LENGTH,
         }
     }
 
+    /// Creates a codec with a smaller maximum MQTT packet body size.
     pub fn with_max_packet_size(max_packet_size: usize) -> Self {
         Self { max_packet_size }
     }
@@ -454,6 +504,11 @@ fn decode_connect(reader: &mut Reader<'_>) -> Result<ConnectPacket> {
             "MQTT CONNECT will flags set without will flag".to_string(),
         ));
     }
+    if password_flag && !username_flag {
+        return Err(Error::Decode(
+            "MQTT CONNECT password flag set without username flag".to_string(),
+        ));
+    }
 
     let keep_alive = reader.read_u16()?;
     let properties = reader.read_properties()?;
@@ -492,6 +547,12 @@ fn decode_connect(reader: &mut Reader<'_>) -> Result<ConnectPacket> {
 }
 
 fn encode_connect(packet: ConnectPacket, dst: &mut BytesMut) -> Result<()> {
+    if packet.password.is_some() && packet.username.is_none() {
+        return Err(Error::Encode(
+            "MQTT CONNECT password requires username".to_string(),
+        ));
+    }
+
     write_utf8_string("MQTT", dst)?;
     write_u8(MQTT_LEVEL_5, dst);
 
@@ -563,7 +624,9 @@ fn decode_publish(flags: u8, reader: &mut Reader<'_>) -> Result<PublishPacket> {
     let packet_id = if qos == QoS::AtMostOnce {
         None
     } else {
-        Some(reader.read_u16()?)
+        let packet_id = reader.read_u16()?;
+        ensure_nonzero_packet_id_decode(packet_id)?;
+        Some(packet_id)
     };
     let properties = reader.read_properties()?;
     let payload = reader.read_remaining_bytes();
@@ -590,6 +653,9 @@ fn encode_publish(packet: PublishPacket, dst: &mut BytesMut) -> Result<u8> {
             "QoS 1/2 MQTT PUBLISH must include packet_id".to_string(),
         ));
     }
+    if let Some(packet_id) = packet.packet_id {
+        ensure_nonzero_packet_id_encode(packet_id)?;
+    }
 
     let mut flags = packet.qos.as_u8() << 1;
     if packet.dup {
@@ -610,6 +676,7 @@ fn encode_publish(packet: PublishPacket, dst: &mut BytesMut) -> Result<u8> {
 
 fn decode_ack(reader: &mut Reader<'_>) -> Result<AckPacket> {
     let packet_id = reader.read_u16()?;
+    ensure_nonzero_packet_id_decode(packet_id)?;
     if reader.remaining() == 0 {
         return Ok(AckPacket::new(packet_id, 0));
     }
@@ -629,6 +696,7 @@ fn decode_ack(reader: &mut Reader<'_>) -> Result<AckPacket> {
 }
 
 fn encode_ack(packet: AckPacket, dst: &mut BytesMut) -> Result<()> {
+    ensure_nonzero_packet_id_encode(packet.packet_id)?;
     write_u16(packet.packet_id, dst);
     if packet.reason_code != 0 || !packet.properties.is_empty() {
         write_u8(packet.reason_code, dst);
@@ -641,19 +709,24 @@ fn encode_ack(packet: AckPacket, dst: &mut BytesMut) -> Result<()> {
 
 fn decode_subscribe(reader: &mut Reader<'_>) -> Result<SubscribePacket> {
     let packet_id = reader.read_u16()?;
+    ensure_nonzero_packet_id_decode(packet_id)?;
     let properties = reader.read_properties()?;
     let mut subscriptions = Vec::new();
 
     while reader.remaining() > 0 {
         let topic_filter = reader.read_utf8_string()?;
         let options = reader.read_u8()?;
+        let retain_handling = (options >> 4) & 0x03;
+        if options & 0xc0 != 0 || retain_handling == 3 {
+            return Err(Error::Decode("invalid MQTT SUBSCRIBE options".to_string()));
+        }
         subscriptions.push(Subscription {
             topic_filter,
             options: SubscriptionOptions {
                 maximum_qos: QoS::from_u8(options & 0x03)?,
                 no_local: options & 0x04 != 0,
                 retain_as_published: options & 0x08 != 0,
-                retain_handling: (options >> 4) & 0x03,
+                retain_handling,
             },
         });
     }
@@ -677,10 +750,16 @@ fn encode_subscribe(packet: SubscribePacket, dst: &mut BytesMut) -> Result<()> {
             "MQTT SUBSCRIBE must include at least one subscription".to_string(),
         ));
     }
+    ensure_nonzero_packet_id_encode(packet.packet_id)?;
 
     write_u16(packet.packet_id, dst);
     write_properties(&packet.properties, dst)?;
     for subscription in packet.subscriptions {
+        if subscription.options.retain_handling > 2 {
+            return Err(Error::Encode(
+                "invalid MQTT SUBSCRIBE retain handling option".to_string(),
+            ));
+        }
         write_utf8_string(&subscription.topic_filter, dst)?;
         let options = subscription.options.maximum_qos.as_u8()
             | (u8::from(subscription.options.no_local) << 2)
@@ -693,14 +772,31 @@ fn encode_subscribe(packet: SubscribePacket, dst: &mut BytesMut) -> Result<()> {
 }
 
 fn decode_suback(reader: &mut Reader<'_>) -> Result<SubAckPacket> {
+    let packet_id = reader.read_u16()?;
+    ensure_nonzero_packet_id_decode(packet_id)?;
+    let properties = reader.read_properties()?;
+    let reason_codes = reader.read_remaining_bytes().to_vec();
+    if reason_codes.is_empty() {
+        return Err(Error::Decode(
+            "MQTT SUBACK must include at least one reason code".to_string(),
+        ));
+    }
+
     Ok(SubAckPacket {
-        packet_id: reader.read_u16()?,
-        properties: reader.read_properties()?,
-        reason_codes: reader.read_remaining_bytes().to_vec(),
+        packet_id,
+        properties,
+        reason_codes,
     })
 }
 
 fn encode_suback(packet: SubAckPacket, dst: &mut BytesMut) -> Result<()> {
+    ensure_nonzero_packet_id_encode(packet.packet_id)?;
+    if packet.reason_codes.is_empty() {
+        return Err(Error::Encode(
+            "MQTT SUBACK must include at least one reason code".to_string(),
+        ));
+    }
+
     write_u16(packet.packet_id, dst);
     write_properties(&packet.properties, dst)?;
     dst.extend_from_slice(&packet.reason_codes);
@@ -709,6 +805,7 @@ fn encode_suback(packet: SubAckPacket, dst: &mut BytesMut) -> Result<()> {
 
 fn decode_unsubscribe(reader: &mut Reader<'_>) -> Result<UnsubscribePacket> {
     let packet_id = reader.read_u16()?;
+    ensure_nonzero_packet_id_decode(packet_id)?;
     let properties = reader.read_properties()?;
     let mut topic_filters = Vec::new();
 
@@ -735,6 +832,7 @@ fn encode_unsubscribe(packet: UnsubscribePacket, dst: &mut BytesMut) -> Result<(
             "MQTT UNSUBSCRIBE must include at least one topic filter".to_string(),
         ));
     }
+    ensure_nonzero_packet_id_encode(packet.packet_id)?;
 
     write_u16(packet.packet_id, dst);
     write_properties(&packet.properties, dst)?;
@@ -745,14 +843,31 @@ fn encode_unsubscribe(packet: UnsubscribePacket, dst: &mut BytesMut) -> Result<(
 }
 
 fn decode_unsuback(reader: &mut Reader<'_>) -> Result<UnsubAckPacket> {
+    let packet_id = reader.read_u16()?;
+    ensure_nonzero_packet_id_decode(packet_id)?;
+    let properties = reader.read_properties()?;
+    let reason_codes = reader.read_remaining_bytes().to_vec();
+    if reason_codes.is_empty() {
+        return Err(Error::Decode(
+            "MQTT UNSUBACK must include at least one reason code".to_string(),
+        ));
+    }
+
     Ok(UnsubAckPacket {
-        packet_id: reader.read_u16()?,
-        properties: reader.read_properties()?,
-        reason_codes: reader.read_remaining_bytes().to_vec(),
+        packet_id,
+        properties,
+        reason_codes,
     })
 }
 
 fn encode_unsuback(packet: UnsubAckPacket, dst: &mut BytesMut) -> Result<()> {
+    ensure_nonzero_packet_id_encode(packet.packet_id)?;
+    if packet.reason_codes.is_empty() {
+        return Err(Error::Encode(
+            "MQTT UNSUBACK must include at least one reason code".to_string(),
+        ));
+    }
+
     write_u16(packet.packet_id, dst);
     write_properties(&packet.properties, dst)?;
     dst.extend_from_slice(&packet.reason_codes);
@@ -1005,6 +1120,24 @@ fn expect_empty(reader: &Reader<'_>) -> Result<()> {
     Ok(())
 }
 
+fn ensure_nonzero_packet_id_decode(packet_id: u16) -> Result<()> {
+    if packet_id == 0 {
+        return Err(Error::Decode(
+            "MQTT packet identifier must be non-zero".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_nonzero_packet_id_encode(packet_id: u16) -> Result<()> {
+    if packet_id == 0 {
+        return Err(Error::Encode(
+            "MQTT packet identifier must be non-zero".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn decode_remaining_length_prefix(src: &[u8]) -> Result<Option<(usize, usize)>> {
     let mut multiplier = 1_usize;
     let mut value = 0_usize;
@@ -1012,6 +1145,7 @@ fn decode_remaining_length_prefix(src: &[u8]) -> Result<Option<(usize, usize)>> 
     for (index, encoded) in src.iter().copied().enumerate().take(4) {
         value += ((encoded & 0x7f) as usize) * multiplier;
         if encoded & 0x80 == 0 {
+            validate_variable_integer_encoding(value, index + 1)?;
             return Ok(Some((value, index + 1)));
         }
         multiplier *= 128;
@@ -1022,6 +1156,15 @@ fn decode_remaining_length_prefix(src: &[u8]) -> Result<Option<(usize, usize)>> 
     }
 
     Ok(None)
+}
+
+fn validate_variable_integer_encoding(value: usize, encoded_len: usize) -> Result<()> {
+    if remaining_length_len(value) != encoded_len {
+        return Err(Error::Decode(
+            "MQTT variable byte integer is not minimally encoded".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn remaining_length_len(mut value: usize) -> usize {
@@ -1148,10 +1291,11 @@ impl<'src> Reader<'src> {
         let mut multiplier = 1_u32;
         let mut value = 0_u32;
 
-        for _ in 0..4 {
+        for encoded_len in 1..=4 {
             let encoded = self.read_u8()?;
             value += ((encoded & 0x7f) as u32) * multiplier;
             if encoded & 0x80 == 0 {
+                validate_variable_integer_encoding(value as usize, encoded_len)?;
                 return Ok(value);
             }
             multiplier *= 128;
@@ -1268,5 +1412,59 @@ mod tests {
         let mut buf = BytesMut::new();
         codec.encode(packet.clone(), &mut buf).expect("encode");
         assert_eq!(codec.decode(&mut buf).expect("decode"), Some(packet));
+    }
+
+    #[test]
+    fn rejects_non_minimal_remaining_length() {
+        let mut codec = MqttCodec::new();
+        let mut buf = BytesMut::from(&[0x30, 0x80, 0x00][..]);
+
+        assert!(matches!(codec.decode(&mut buf), Err(Error::Decode(_))));
+    }
+
+    #[test]
+    fn rejects_zero_packet_identifier() {
+        let mut codec = MqttCodec::new();
+        let mut buf = BytesMut::from(&[0x40, 0x02, 0x00, 0x00][..]);
+
+        assert!(matches!(codec.decode(&mut buf), Err(Error::Decode(_))));
+    }
+
+    #[test]
+    fn rejects_invalid_subscribe_options() {
+        let mut codec = MqttCodec::new();
+        let mut buf = BytesMut::from(&[0x82, 0x07, 0x00, 0x01, 0x00, 0x00, 0x01, b'a', 0x30][..]);
+
+        assert!(matches!(codec.decode(&mut buf), Err(Error::Decode(_))));
+    }
+
+    #[test]
+    fn rejects_password_without_username() {
+        let mut codec = MqttCodec::new();
+        let mut buf = BytesMut::new();
+
+        assert!(matches!(
+            codec.encode(
+                MqttPacket::Connect(ConnectPacket {
+                    clean_start: true,
+                    keep_alive: 60,
+                    properties: Vec::new(),
+                    client_id: "client".to_string(),
+                    will: None,
+                    username: None,
+                    password: Some(Bytes::from_static(b"secret")),
+                }),
+                &mut buf,
+            ),
+            Err(Error::Encode(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_empty_suback_reason_codes() {
+        let mut codec = MqttCodec::new();
+        let mut buf = BytesMut::from(&[0x90, 0x03, 0x00, 0x01, 0x00][..]);
+
+        assert!(matches!(codec.decode(&mut buf), Err(Error::Decode(_))));
     }
 }

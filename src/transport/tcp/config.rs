@@ -6,19 +6,34 @@ use std::time::Duration;
 /// connections.
 #[derive(Clone)]
 pub struct TcpConnectionConfig {
-    /// Initial read buffer capacity.
+    /// Initial read buffer capacity in bytes.
+    ///
+    /// The buffer can grow as Tokio reads more bytes, but a connection is
+    /// closed if buffered data exceeds [`Self::max_frame_size`] before the
+    /// codec can produce a frame.
     pub read_buffer_capacity: usize,
-    /// Initial write buffer capacity.
+    /// Initial write buffer capacity in bytes.
+    ///
+    /// Encoded outbound frames are accumulated here before being written to the
+    /// socket.
     pub write_buffer_capacity: usize,
     /// Maximum buffered frame size before closing the connection.
     pub max_frame_size: usize,
-    /// Bounded outbound command queue size.
+    /// Bounded outbound command queue size for writes sent through channels.
+    ///
+    /// Calls such as [`crate::Channel::write`] wait for capacity when this
+    /// queue is full.
     pub outbound_queue_size: usize,
     /// Whether `TCP_NODELAY` is enabled.
     pub tcp_nodelay: bool,
-    /// Optional idle timeout for the connection loop.
+    /// Optional timeout for closing a connection after no reads are received.
+    ///
+    /// Outbound writes do not reset this timer.
     pub idle_timeout: Option<Duration>,
-    /// Whether per-connection stats are collected.
+    /// Whether byte and frame counters are collected for the connection.
+    ///
+    /// Disabled by default so applications that do not need stats avoid the
+    /// shared counter allocations and atomic updates.
     pub track_connection_stats: bool,
 }
 

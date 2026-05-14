@@ -45,6 +45,7 @@ impl<W: Send + 'static> Channel<W> {
         }
     }
 
+    /// Connection id assigned by the server or client runtime.
     pub fn id(&self) -> u64 {
         self.id
     }
@@ -64,12 +65,15 @@ impl<W: Send + 'static> Channel<W> {
         self.tx.is_closed()
     }
 
-    /// Remaining outbound queue capacity.
+    /// Remaining outbound command queue capacity.
+    ///
+    /// This is the capacity of the channel queue, not the operating system
+    /// socket send buffer.
     pub fn capacity(&self) -> usize {
         self.tx.capacity()
     }
 
-    /// Configured outbound queue capacity.
+    /// Configured outbound command queue capacity.
     pub fn max_capacity(&self) -> usize {
         self.tx.max_capacity()
     }
@@ -91,7 +95,10 @@ impl<W: Send + 'static> Channel<W> {
             .map_err(|_| Error::ChannelClosed)
     }
 
-    /// Queues a message and waits until the connection task has flushed it.
+    /// Queues a message and waits until the connection task has flushed it to the socket.
+    ///
+    /// The acknowledgement means rs-netty encoded the message and completed the
+    /// socket write; it does not mean the remote peer has read or processed it.
     pub async fn write_and_flush(&self, msg: W) -> Result<()> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.tx
@@ -102,6 +109,8 @@ impl<W: Send + 'static> Channel<W> {
     }
 
     /// Requests local connection shutdown.
+    ///
+    /// The connection task observes this command asynchronously and then exits.
     pub async fn close(&self) -> Result<()> {
         self.tx
             .send(StreamCommand::Close)

@@ -14,21 +14,35 @@ use crate::{
 /// such as [`crate::codec::LineCodec`] or
 /// [`crate::codec::LengthFieldBasedFrameDecoder`].
 ///
+/// `JsonDecode<T>` is a pipeline stage, not a general-purpose JSON API. For
+/// direct serialization or parsing outside a pipeline, use `sonic-rs`,
+/// `serde_json`, or another JSON crate directly.
+///
+/// # Feature
+///
+/// This type is available with the `json` feature:
+///
+/// ```toml
+/// rs-netty = { version = "0.2", features = ["json"] }
+/// ```
+///
+/// # Example
+///
 /// ```no_run
-/// # use rs_netty::{codec::{JsonDecode, JsonEncode, LineCodec}, pipeline};
+/// # use rs_netty::{codec::{JsonDecode, JsonEncode, LineCodec}, handler, pipeline, Result};
 /// # #[derive(serde::Serialize, serde::Deserialize)]
 /// # struct Request { op: String }
 /// # #[derive(serde::Serialize, serde::Deserialize)]
 /// # struct Response { ok: bool }
-/// # struct Handler;
-/// # impl rs_netty::Handler<Request> for Handler {
-/// #     type Write = Response;
-/// #     async fn read(&mut self, _: &mut rs_netty::Context<Self::Write>, _: Request) -> rs_netty::Result<()> { Ok(()) }
+/// # struct ApiHandler;
+/// # #[handler(ApiHandler)]
+/// # async fn handle(_req: Request) -> Result<Response> {
+/// #     Ok(Response { ok: true })
 /// # }
 /// let _pipeline = pipeline()
 ///     .codec(LineCodec::new())
 ///     .inbound(JsonDecode::<Request>::new())
-///     .handler(Handler)
+///     .handler(ApiHandler)
 ///     .outbound(JsonEncode::<Response>::new());
 /// ```
 pub struct JsonDecode<T> {
@@ -37,6 +51,10 @@ pub struct JsonDecode<T> {
 
 impl<T> JsonDecode<T> {
     /// Creates a JSON decoder stage.
+    ///
+    /// The input is provided by the preceding framing codec. This stage accepts
+    /// both `String` and `bytes::Bytes` and produces `T` when deserialization
+    /// succeeds.
     pub fn new() -> Self {
         Self {
             _marker: PhantomData,
@@ -76,12 +94,19 @@ where
 ///
 /// The stage serializes typed messages into compact JSON strings. Pair it with
 /// a framing codec that accepts `String`, such as [`crate::codec::LineCodec`].
+///
+/// `JsonEncode<T>` is intended for outbound pipeline rendering. It deliberately
+/// does not expose a standalone `to_string` or `to_vec` wrapper; use your JSON
+/// crate directly for serialization outside rs-netty pipelines.
 pub struct JsonEncode<T> {
     _marker: PhantomData<fn() -> T>,
 }
 
 impl<T> JsonEncode<T> {
     /// Creates a JSON encoder stage.
+    ///
+    /// The output is a compact JSON `String` that is forwarded to the next
+    /// outbound stage or final stream encoder.
     pub fn new() -> Self {
         Self {
             _marker: PhantomData,

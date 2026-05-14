@@ -30,6 +30,7 @@ impl<W: Send + 'static> DatagramContext<W> {
         }
     }
 
+    /// Socket id assigned by the UDP runtime.
     pub fn id(&self) -> u64 {
         self.info.id()
     }
@@ -50,18 +51,27 @@ impl<W: Send + 'static> DatagramContext<W> {
     }
 
     /// Stages a response to the current datagram peer.
+    ///
+    /// The message is stored in the handler-local outbox and is sent when the
+    /// handler returns or when the outbox is explicitly flushed.
     pub async fn write(&mut self, msg: W) -> Result<()> {
         self.outbox.push_write(self.info.peer_addr(), msg);
         Ok(())
     }
 
     /// Stages a datagram for an explicit peer.
+    ///
+    /// Use this when a handler needs to reply somewhere other than the sender
+    /// of the current datagram.
     pub async fn write_to(&mut self, peer_addr: SocketAddr, msg: W) -> Result<()> {
         self.outbox.push_write(peer_addr, msg);
         Ok(())
     }
 
     /// Sends messages staged by this handler so far.
+    ///
+    /// The returned result is acknowledged by the socket task after `send_to`
+    /// completes for all staged messages before this flush command.
     pub async fn flush(&mut self) -> Result<()> {
         let rx = self.outbox.push_flush();
         rx.await.unwrap_or(Err(crate::Error::ChannelClosed))

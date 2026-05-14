@@ -5,6 +5,7 @@ use crate::{
     Error, Result,
 };
 
+/// UDP datagram codec that treats each datagram as one UTF-8 string.
 pub struct Utf8DatagramCodec;
 
 impl DatagramDecoder for Utf8DatagramCodec {

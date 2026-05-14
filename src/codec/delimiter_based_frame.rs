@@ -5,6 +5,11 @@ use crate::{
     Error, Result,
 };
 
+/// Codec for delimiter-terminated binary frames.
+///
+/// Decoding searches for the earliest configured delimiter. By default the
+/// returned frame excludes the delimiter. Encoding appends the first configured
+/// delimiter to each outbound item.
 pub struct DelimiterBasedFrameDecoder {
     max_frame_length: usize,
     delimiters: Vec<Bytes>,
@@ -12,10 +17,14 @@ pub struct DelimiterBasedFrameDecoder {
 }
 
 impl DelimiterBasedFrameDecoder {
+    /// Creates a decoder with one delimiter.
     pub fn new(max_frame_length: usize, delimiter: impl Into<Bytes>) -> Self {
         Self::new_many(max_frame_length, [delimiter])
     }
 
+    /// Creates a decoder with multiple delimiters.
+    ///
+    /// Panics if no delimiters are provided or any delimiter is empty.
     pub fn new_many<I, D>(max_frame_length: usize, delimiters: I) -> Self
     where
         I: IntoIterator<Item = D>,
@@ -35,11 +44,13 @@ impl DelimiterBasedFrameDecoder {
         }
     }
 
+    /// Controls whether decoded frames include the matched delimiter.
     pub fn strip_delimiter(mut self, strip_delimiter: bool) -> Self {
         self.strip_delimiter = strip_delimiter;
         self
     }
 
+    /// Creates a CRLF/LF line delimiter decoder for binary payloads.
     pub fn line_delimiter(max_frame_length: usize) -> Self {
         Self::new_many(
             max_frame_length,

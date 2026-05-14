@@ -5,6 +5,11 @@ use crate::{
     Result,
 };
 
+/// Byte stream drain codec.
+///
+/// Decoding returns all bytes currently buffered as one [`Bytes`] value. This
+/// is useful for protocols that already have an external message boundary or
+/// for tests; it is not a framing codec for arbitrary TCP streams.
 pub struct ByteArrayDecoder;
 
 impl Decoder for ByteArrayDecoder {
@@ -26,6 +31,7 @@ impl Encoder<Bytes> for ByteArrayDecoder {
     }
 }
 
+/// Pass-through byte encoder.
 pub struct ByteArrayEncoder;
 
 impl Encoder<Bytes> for ByteArrayEncoder {

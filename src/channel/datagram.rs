@@ -33,6 +33,7 @@ impl<W: Send + 'static> DatagramChannel<W> {
         Self { id, local_addr, tx }
     }
 
+    /// Socket id assigned by the UDP runtime.
     pub fn id(&self) -> u64 {
         self.id
     }
@@ -47,17 +48,23 @@ impl<W: Send + 'static> DatagramChannel<W> {
         self.tx.is_closed()
     }
 
-    /// Remaining outbound queue capacity.
+    /// Remaining outbound command queue capacity.
+    ///
+    /// This is the capacity of the socket task queue, not the operating system
+    /// socket send buffer.
     pub fn capacity(&self) -> usize {
         self.tx.capacity()
     }
 
-    /// Configured outbound queue capacity.
+    /// Configured outbound command queue capacity.
     pub fn max_capacity(&self) -> usize {
         self.tx.max_capacity()
     }
 
     /// Queues a datagram for an explicit peer.
+    ///
+    /// This waits for queue capacity but does not wait for `send_to` to
+    /// complete.
     pub async fn write_to(&self, peer_addr: SocketAddr, msg: W) -> Result<()> {
         self.tx
             .send(DatagramCommand::WriteTo(peer_addr, msg))
@@ -66,6 +73,9 @@ impl<W: Send + 'static> DatagramChannel<W> {
     }
 
     /// Queues a datagram and waits until the socket task has sent it.
+    ///
+    /// The acknowledgement means rs-netty encoded the message and completed
+    /// `send_to`; UDP still provides no delivery guarantee.
     pub async fn write_to_and_flush(&self, peer_addr: SocketAddr, msg: W) -> Result<()> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.tx
@@ -76,6 +86,8 @@ impl<W: Send + 'static> DatagramChannel<W> {
     }
 
     /// Requests local socket shutdown.
+    ///
+    /// The socket task observes this command asynchronously and then exits.
     pub async fn close(&self) -> Result<()> {
         self.tx
             .send(DatagramCommand::Close)

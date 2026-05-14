@@ -55,6 +55,38 @@
 //! Writes issued through [`Channel`], [`TcpClientHandle`], [`DatagramChannel`],
 //! or [`UdpClientHandle`] are sent through the connection/socket command queue.
 //! The queue is bounded by the configured outbound queue size.
+//!
+//! # Handler ergonomics
+//!
+//! Simple handlers can use the [`handler`] attribute macro:
+//!
+//! ```no_run
+//! # use rs_netty::{handler, Result};
+//! struct Echo;
+//!
+//! #[handler(Echo)]
+//! async fn echo(msg: String) -> Result<String> {
+//!     Ok(msg)
+//! }
+//! ```
+//!
+//! A handler function that returns `Result<Out>` automatically writes `Out`
+//! back through the pipeline. A function that returns `Result<()>` consumes the
+//! inbound message without automatically writing; in that case use
+//! `#[handler(TypeName, write = WriteType)]` so the macro can set
+//! `Handler::Write`.
+//!
+//! Write a manual [`Handler`] or [`DatagramHandler`] implementation when the
+//! logic needs direct access to [`Context`] or [`DatagramContext`], such as
+//! explicit flush timing or multiple writes for one inbound message.
+//!
+//! # Client pipeline choices
+//!
+//! [`TcpClient::pipeline`] accepts a reusable factory closure, matching the
+//! server API and working well for stateless or cloneable client handlers.
+//! [`TcpClient::pipeline_instance`] accepts one already-built pipeline and
+//! consumes it when the client connects. Prefer `pipeline_instance` when a
+//! client handler owns one-shot state, such as `tokio::sync::oneshot::Sender`.
 
 pub mod channel;
 pub mod client;

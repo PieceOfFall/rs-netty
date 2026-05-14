@@ -5,6 +5,7 @@ use crate::{
     Result,
 };
 
+/// UDP datagram codec that preserves each datagram as raw bytes.
 pub struct BytesDatagramCodec;
 
 impl DatagramDecoder for BytesDatagramCodec {

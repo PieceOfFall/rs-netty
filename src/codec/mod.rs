@@ -12,6 +12,8 @@ pub mod length_field_based_frame;
 pub mod line;
 pub mod mqtt;
 pub mod utf8_datagram;
+#[cfg(feature = "websocket")]
+pub mod websocket;
 
 pub use byte_array::{ByteArrayDecoder, ByteArrayEncoder};
 pub use bytes_datagram::BytesDatagramCodec;
@@ -27,6 +29,11 @@ pub use mqtt::{
     SubscriptionOptions, UnsubAckPacket, UnsubscribePacket, Will,
 };
 pub use utf8_datagram::Utf8DatagramCodec;
+#[cfg(feature = "websocket")]
+pub use websocket::{
+    WebSocketClose, WebSocketCodec, WebSocketHandshake, WebSocketHandshakeResponse,
+    WebSocketInbound, WebSocketMessage, WebSocketOutbound,
+};
 
 /// Decoder for byte-stream transports such as TCP.
 ///

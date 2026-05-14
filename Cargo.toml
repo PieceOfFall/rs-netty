@@ -1,6 +1,6 @@
 [package]
 name = "rs-netty"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 rust-version = "1.75"
 license = "Apache-2.0"
@@ -17,9 +17,11 @@ exclude = ["benchmarks/rs-netty", "benchmarks/tokio"]
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal"] }
+base64 = { version = "0.22", optional = true }
 bytes = "1"
 rs-netty-macros = { version = "0.2.0", path = "rs-netty-macros", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
+sha1 = { version = "0.10", optional = true }
 sonic-rs = { version = "0.5.8", optional = true }
 thiserror = "2"
 tracing = "0.1"
@@ -29,10 +31,47 @@ trait-variant = "0.1"
 default = ["macros"]
 json = ["dep:serde", "dep:sonic-rs"]
 macros = ["dep:rs-netty-macros"]
+websocket = ["dep:base64", "dep:sha1"]
 
 [dev-dependencies]
 trybuild = "1"
 
 [[example]]
+name = "tcp_echo_client"
+required-features = ["macros"]
+
+[[example]]
+name = "tcp_echo_server"
+required-features = ["macros"]
+
+[[example]]
 name = "tcp_json_line_echo"
-required-features = ["json"]
+required-features = ["json", "macros"]
+
+[[example]]
+name = "tcp_lifecycle"
+required-features = ["macros"]
+
+[[example]]
+name = "tcp_typed_chain"
+required-features = ["macros"]
+
+[[example]]
+name = "tcp_typed_chain_client"
+required-features = ["macros"]
+
+[[example]]
+name = "udp_echo_client"
+required-features = ["macros"]
+
+[[example]]
+name = "udp_echo_server"
+required-features = ["macros"]
+
+[[example]]
+name = "udp_typed_chain"
+required-features = ["macros"]
+
+[[example]]
+name = "udp_typed_chain_client"
+required-features = ["macros"]

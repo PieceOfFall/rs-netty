@@ -5,13 +5,23 @@ use crate::{
     Error, Result,
 };
 
+/// Byte order used for numeric length fields.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ByteOrder {
+    /// Most significant byte first.
     #[default]
     BigEndian,
+    /// Least significant byte first.
     LittleEndian,
 }
 
+/// Decoder for frames that carry their payload length in the byte stream.
+///
+/// This follows the same shape as Netty's length-field based framing: the
+/// length field can appear after an offset, can be adjusted before calculating
+/// the frame end, and leading bytes can be stripped from the returned frame.
+///
+/// Supported length field widths are 1, 2, 3, 4, and 8 bytes.
 pub struct LengthFieldBasedFrameDecoder {
     max_frame_length: usize,
     length_field_offset: usize,
@@ -22,6 +32,10 @@ pub struct LengthFieldBasedFrameDecoder {
 }
 
 impl LengthFieldBasedFrameDecoder {
+    /// Creates a length-field decoder with no adjustment.
+    ///
+    /// The returned frame strips the bytes up to and including the length
+    /// field, so the decoded item is the payload by default.
     pub fn new(
         max_frame_length: usize,
         length_field_offset: usize,
@@ -37,6 +51,11 @@ impl LengthFieldBasedFrameDecoder {
         }
     }
 
+    /// Creates a length-field decoder with explicit adjustment and strip count.
+    ///
+    /// `length_adjustment` is added to the decoded length before calculating
+    /// the frame end. `initial_bytes_to_strip` controls how many bytes are
+    /// removed from the front of the complete frame before it is returned.
     pub fn with_adjustment(
         max_frame_length: usize,
         length_field_offset: usize,
@@ -54,6 +73,7 @@ impl LengthFieldBasedFrameDecoder {
         }
     }
 
+    /// Sets the byte order used to read and write the length field.
     pub fn byte_order(mut self, byte_order: ByteOrder) -> Self {
         self.byte_order = byte_order;
         self
@@ -163,12 +183,16 @@ impl Encoder<Bytes> for LengthFieldBasedFrameDecoder {
     }
 }
 
+/// Outbound stage that prepends a binary length field.
+///
+/// Supported length field widths are 1, 2, 3, 4, and 8 bytes.
 pub struct LengthFieldPrepender {
     length_field_length: usize,
     byte_order: ByteOrder,
 }
 
 impl LengthFieldPrepender {
+    /// Creates a length prepender using big-endian byte order.
     pub fn new(length_field_length: usize) -> Self {
         Self {
             length_field_length,
@@ -176,6 +200,7 @@ impl LengthFieldPrepender {
         }
     }
 
+    /// Sets the byte order used to write the length field.
     pub fn byte_order(mut self, byte_order: ByteOrder) -> Self {
         self.byte_order = byte_order;
         self

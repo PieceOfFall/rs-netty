@@ -24,16 +24,52 @@ pub type TcpClientConfig = TcpConnectionConfig;
 pub struct NoPipeline;
 
 /// Stores a reusable TCP client pipeline factory.
+///
+/// This is produced by [`TcpClient::pipeline`] and is normally not named by
+/// applications.
 pub struct PipelineFactory<F> {
     factory: F,
 }
 
 /// Stores a TCP client pipeline that will be consumed exactly once by `run`.
+///
+/// This is produced by [`TcpClient::pipeline_instance`] and is normally not
+/// named by applications.
 pub struct PipelineInstance<B> {
     pipeline: B,
 }
 
 /// Builder for a TCP client connection.
+///
+/// A client can be configured with either [`TcpClient::pipeline`] or
+/// [`TcpClient::pipeline_instance`].
+///
+/// Use [`TcpClient::pipeline`] when the pipeline can be produced from a
+/// reusable factory closure:
+///
+/// ```no_run
+/// # use rs_netty::{codec::LineCodec, pipeline, Context, Handler, Result, TcpClient};
+/// # struct PrintResponse;
+/// # impl Handler<String> for PrintResponse {
+/// #     type Write = String;
+/// #     async fn read(&mut self, _: &mut Context<Self::Write>, _: String) -> Result<()> { Ok(()) }
+/// # }
+/// # async fn run() -> Result<()> {
+/// let client = TcpClient::connect("127.0.0.1:9000")
+///     .pipeline(|| {
+///         pipeline()
+///             .codec(LineCodec::new())
+///             .handler(PrintResponse)
+///     })
+///     .run()
+///     .await?;
+/// # client.close().await?;
+/// # client.wait().await
+/// # }
+/// ```
+///
+/// Use [`TcpClient::pipeline_instance`] when the client handler owns state that
+/// should be consumed exactly once, such as a `oneshot::Sender`.
 pub struct TcpClient<F = NoPipeline, L = NoLife> {
     remote_addr: String,
     local_addr: Option<String>,
@@ -56,7 +92,15 @@ impl TcpClient<NoPipeline, NoLife> {
 }
 
 impl<L> TcpClient<NoPipeline, L> {
-    /// Sets the connection pipeline factory.
+    /// Sets a reusable connection pipeline factory.
+    ///
+    /// The factory is a closure that builds a fresh pipeline value. This is the
+    /// same shape used by `TcpServer`, where a new pipeline is needed for each
+    /// accepted connection. For clients it is a good fit when the handler has
+    /// no one-shot state or the state is cheaply cloneable.
+    ///
+    /// If the handler must own a non-clone value, prefer
+    /// [`TcpClient::pipeline_instance`].
     pub fn pipeline<F, B, P>(self, factory: F) -> TcpClient<PipelineFactory<F>, L>
     where
         F: Fn() -> B + Clone + Send + Sync + 'static,
@@ -74,9 +118,45 @@ impl<L> TcpClient<NoPipeline, L> {
 
     /// Sets a single pipeline instance for this client connection.
     ///
-    /// This is useful for client handlers that own one-shot state such as a
-    /// `oneshot::Sender`, where a reusable pipeline factory would require
-    /// extra shared-state wrapping.
+    /// Unlike [`TcpClient::pipeline`], this method consumes an already-built
+    /// pipeline builder when `run` starts the client. It is useful for handlers
+    /// that own one-shot state such as a `oneshot::Sender`, where a reusable
+    /// factory would otherwise require `Arc<Mutex<Option<_>>>` or similar
+    /// shared-state wrapping.
+    ///
+    /// ```no_run
+    /// # use rs_netty::{codec::LineCodec, pipeline, Context, Handler, Result, TcpClient};
+    /// # use tokio::sync::oneshot;
+    /// # struct PrintResponse {
+    /// #     done: Option<oneshot::Sender<()>>,
+    /// # }
+    /// # impl Handler<String> for PrintResponse {
+    /// #     type Write = String;
+    /// #     async fn read(&mut self, _: &mut Context<Self::Write>, _: String) -> Result<()> {
+    /// #         if let Some(done) = self.done.take() {
+    /// #             let _ = done.send(());
+    /// #         }
+    /// #         Ok(())
+    /// #     }
+    /// # }
+    /// # async fn run() -> Result<()> {
+    /// let (done, wait_done) = oneshot::channel();
+    ///
+    /// let client = TcpClient::connect("127.0.0.1:9000")
+    ///     .pipeline_instance(
+    ///         pipeline()
+    ///             .codec(LineCodec::new())
+    ///             .handler(PrintResponse { done: Some(done) }),
+    ///     )
+    ///     .run()
+    ///     .await?;
+    ///
+    /// client.write_and_flush("hello".to_string()).await?;
+    /// let _ = wait_done.await;
+    /// # client.close().await?;
+    /// # client.wait().await
+    /// # }
+    /// ```
     pub fn pipeline_instance<B, P>(self, pipeline: B) -> TcpClient<PipelineInstance<B>, L>
     where
         B: IntoStreamPipeline<Pipeline = P>,
