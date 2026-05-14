@@ -6,6 +6,8 @@ pub mod byte_array;
 pub mod bytes_datagram;
 pub mod delimiter_based_frame;
 pub mod fixed_length_frame;
+#[cfg(feature = "json")]
+pub mod json;
 pub mod length_field_based_frame;
 pub mod line;
 pub mod mqtt;
@@ -15,6 +17,8 @@ pub use byte_array::{ByteArrayDecoder, ByteArrayEncoder};
 pub use bytes_datagram::BytesDatagramCodec;
 pub use delimiter_based_frame::DelimiterBasedFrameDecoder;
 pub use fixed_length_frame::FixedLengthFrameDecoder;
+#[cfg(feature = "json")]
+pub use json::{JsonDecode, JsonEncode};
 pub use length_field_based_frame::{ByteOrder, LengthFieldBasedFrameDecoder, LengthFieldPrepender};
 pub use line::LineCodec;
 pub use mqtt::{

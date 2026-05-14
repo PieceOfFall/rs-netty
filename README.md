@@ -42,7 +42,8 @@ are useful as a directional snapshot, not a universal performance claim.
 - **No dynamic handler dispatch on the main path**: the default pipeline is built
   from generic static stages rather than `Box<dyn Handler>`.
 - **Practical batteries included**: built-in line, length-field, delimiter,
-  fixed-length, byte-array, MQTT, UTF-8 datagram, and bytes datagram codecs.
+  fixed-length, byte-array, MQTT, UTF-8 datagram, bytes datagram, and two
+  optional JSON pipeline stages.
 - **Operational hooks when you need them**: optional lifecycle hooks, idle
   timeout, graceful shutdown handles, bounded outbound queues, and opt-in TCP
   connection stats.
@@ -257,10 +258,56 @@ Stream codecs:
 - `ByteArrayEncoder`
 - `MqttCodec`
 
+Optional pipeline stages behind the `json` feature:
+
+- `JsonDecode<T>`
+- `JsonEncode<T>`
+
 Datagram codecs:
 
 - `Utf8DatagramCodec`
 - `BytesDatagramCodec`
+
+`JsonDecode<T>` and `JsonEncode<T>` are deliberately small codec-layer helpers:
+they parse typed messages into the pipeline and serialize typed responses back
+out. rs-netty does not expose a broader JSON API.
+
+Enable these stages with:
+
+```toml
+[dependencies]
+rs-netty = { version = "0.2", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+```
+
+Then keep framing and JSON parsing as separate pipeline stages:
+
+```rust
+use rs_netty::{
+    codec::{JsonDecode, JsonEncode, LineCodec},
+    pipeline, Handler,
+};
+
+#[derive(serde::Deserialize)]
+struct Request {
+    op: String,
+}
+
+#[derive(serde::Serialize)]
+struct Response {
+    ok: bool,
+}
+
+let pipeline = pipeline()
+    .codec(LineCodec::new())
+    .inbound(JsonDecode::<Request>::new())
+    .handler(ApiHandler)
+    .outbound(JsonEncode::<Response>::new());
+```
+
+`derive` is only the example path here. Your message types simply need to
+implement `serde::Deserialize` for `JsonDecode<T>` and `serde::Serialize` for
+`JsonEncode<T>`.
 
 ## Benchmarks
 
@@ -289,6 +336,7 @@ local run, not a universal performance claim.
 ```bash
 cargo run --example tcp_echo_server
 cargo run --example tcp_echo_client
+cargo run --example tcp_json_line_echo --features json
 cargo run --example tcp_typed_chain
 cargo run --example tcp_typed_chain_client
 cargo run --example tcp_lifecycle

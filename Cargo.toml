@@ -14,9 +14,19 @@ exclude = [
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal"] }
 bytes = "1"
+serde = { version = "1", features = ["derive"], optional = true }
+sonic-rs = { version = "0.5.8", optional = true }
 thiserror = "2"
 tracing = "0.1"
 trait-variant = "0.1"
 
+[features]
+default = []
+json = ["dep:serde", "dep:sonic-rs"]
+
 [dev-dependencies]
 trybuild = "1"
+
+[[example]]
+name = "tcp_json_line_echo"
+required-features = ["json"]
