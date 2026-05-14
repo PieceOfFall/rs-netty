@@ -7,6 +7,26 @@ it around Rust ownership, async/await, Tokio tasks, bounded queues, and typed
 messages. The result is a small network framework where invalid pipeline order,
 message mismatches, and TCP/UDP pipeline mixups are caught at compile time.
 
+## Benchmark Snapshot
+
+These charts come from the benchmark harness in `benchmarks/`, comparing
+`rs-netty`, bare Tokio, and Java Netty on one local non-loopback interface. They
+are useful as a directional snapshot, not a universal performance claim.
+
+### Throughput
+
+![Throughput benchmark](docs/assets/throughput.png)
+
+### P99 Latency
+
+![P99 latency benchmark](docs/assets/p99_latency.png)
+
+### Server Memory
+
+![Server memory benchmark](docs/assets/server_memory.png)
+
+### Latency Percentiles
+
 ![Latency percentiles benchmark](docs/assets/latency_percentiles.png)
 
 ## Why rs-netty?
