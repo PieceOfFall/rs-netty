@@ -23,6 +23,16 @@ pub type TcpClientConfig = TcpConnectionConfig;
 /// Marker used before a TCP client pipeline has been configured.
 pub struct NoPipeline;
 
+/// Stores a reusable TCP client pipeline factory.
+pub struct PipelineFactory<F> {
+    factory: F,
+}
+
+/// Stores a TCP client pipeline that will be consumed exactly once by `run`.
+pub struct PipelineInstance<B> {
+    pipeline: B,
+}
+
 /// Builder for a TCP client connection.
 pub struct TcpClient<F = NoPipeline, L = NoLife> {
     remote_addr: String,
@@ -47,7 +57,7 @@ impl TcpClient<NoPipeline, NoLife> {
 
 impl<L> TcpClient<NoPipeline, L> {
     /// Sets the connection pipeline factory.
-    pub fn pipeline<F, B, P>(self, factory: F) -> TcpClient<F, L>
+    pub fn pipeline<F, B, P>(self, factory: F) -> TcpClient<PipelineFactory<F>, L>
     where
         F: Fn() -> B + Clone + Send + Sync + 'static,
         B: IntoStreamPipeline<Pipeline = P>,
@@ -56,7 +66,26 @@ impl<L> TcpClient<NoPipeline, L> {
         TcpClient {
             remote_addr: self.remote_addr,
             local_addr: self.local_addr,
-            pipeline_factory: factory,
+            pipeline_factory: PipelineFactory { factory },
+            config: self.config,
+            life: self.life,
+        }
+    }
+
+    /// Sets a single pipeline instance for this client connection.
+    ///
+    /// This is useful for client handlers that own one-shot state such as a
+    /// `oneshot::Sender`, where a reusable pipeline factory would require
+    /// extra shared-state wrapping.
+    pub fn pipeline_instance<B, P>(self, pipeline: B) -> TcpClient<PipelineInstance<B>, L>
+    where
+        B: IntoStreamPipeline<Pipeline = P>,
+        P: StreamRuntimePipeline,
+    {
+        TcpClient {
+            remote_addr: self.remote_addr,
+            local_addr: self.local_addr,
+            pipeline_factory: PipelineInstance { pipeline },
             config: self.config,
             life: self.life,
         }
@@ -122,8 +151,11 @@ impl<F, L> TcpClient<F, L> {
         self.config.track_connection_stats = true;
         self
     }
+}
 
-    /// Connects, starts the connection task, and returns a client handle.
+impl<F, L> TcpClient<PipelineFactory<F>, L> {
+    /// Connects with a reusable pipeline factory, starts the connection task,
+    /// and returns a client handle.
     pub async fn run<B, P>(self) -> Result<TcpClientHandle<P::Write>>
     where
         F: Fn() -> B + Clone + Send + Sync + 'static,
@@ -137,37 +169,86 @@ impl<F, L> TcpClient<F, L> {
 
         let local_addr = stream.local_addr()?;
         let peer_addr = stream.peer_addr()?;
-        let pipeline = (self.pipeline_factory)().into_stream_pipeline();
-        let config = self.config;
-        let stats = config
-            .track_connection_stats
-            .then(crate::context::ConnectionStats::new);
-        let (tx, rx) = mpsc::channel::<StreamCommand<P::Write>>(config.outbound_queue_size);
-        let channel = Channel::new(1, peer_addr, local_addr, tx, stats.clone());
-        let connection_channel = channel.clone();
-        let life = self.life;
-
-        let join = tokio::spawn(async move {
-            run_stream_connection_with_life(
-                StreamConnection {
-                    id: 1,
-                    stream,
-                    peer_addr,
-                    local_addr,
-                    pipeline,
-                    config,
-                    channel: connection_channel,
-                    rx,
-                    shutdown_rx: None,
-                    stats,
-                },
-                life,
-            )
-            .await
-        });
-
-        Ok(TcpClientHandle { channel, join })
+        let pipeline = (self.pipeline_factory.factory)().into_stream_pipeline();
+        run_connected_client(
+            stream,
+            peer_addr,
+            local_addr,
+            pipeline,
+            self.config,
+            self.life,
+        )
+        .await
     }
+}
+
+impl<B, L> TcpClient<PipelineInstance<B>, L> {
+    /// Connects with a single-use pipeline, starts the connection task, and
+    /// returns a client handle.
+    pub async fn run<P>(self) -> Result<TcpClientHandle<P::Write>>
+    where
+        B: IntoStreamPipeline<Pipeline = P>,
+        P: StreamRuntimePipeline,
+        L: Life,
+    {
+        let remote_addr = self.remote_addr.parse::<SocketAddr>()?;
+        let stream = connect_stream(remote_addr, self.local_addr.as_deref()).await?;
+        stream.set_nodelay(self.config.tcp_nodelay)?;
+
+        let local_addr = stream.local_addr()?;
+        let peer_addr = stream.peer_addr()?;
+        let pipeline = self.pipeline_factory.pipeline.into_stream_pipeline();
+        run_connected_client(
+            stream,
+            peer_addr,
+            local_addr,
+            pipeline,
+            self.config,
+            self.life,
+        )
+        .await
+    }
+}
+
+async fn run_connected_client<P, L>(
+    stream: TcpStream,
+    peer_addr: SocketAddr,
+    local_addr: SocketAddr,
+    pipeline: P,
+    config: TcpConnectionConfig,
+    life: L,
+) -> Result<TcpClientHandle<P::Write>>
+where
+    P: StreamRuntimePipeline,
+    L: Life,
+{
+    let stats = config
+        .track_connection_stats
+        .then(crate::context::ConnectionStats::new);
+    let (tx, rx) = mpsc::channel::<StreamCommand<P::Write>>(config.outbound_queue_size);
+    let channel = Channel::new(1, peer_addr, local_addr, tx, stats.clone());
+    let connection_channel = channel.clone();
+
+    let join = tokio::spawn(async move {
+        run_stream_connection_with_life(
+            StreamConnection {
+                id: 1,
+                stream,
+                peer_addr,
+                local_addr,
+                pipeline,
+                config,
+                channel: connection_channel,
+                rx,
+                shutdown_rx: None,
+                stats,
+            },
+            life,
+        )
+        .await
+    });
+
+    Ok(TcpClientHandle { channel, join })
 }
 
 /// Handle for an active TCP client connection.

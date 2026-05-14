@@ -1,8 +1,6 @@
-use std::sync::{Arc, Mutex};
-
 use rs_netty::{
     codec::{JsonDecode, JsonEncode, LineCodec},
-    pipeline, Context, Handler, Result, TcpClient, TcpServer,
+    handler, pipeline, Result, TcpClient, TcpServer,
 };
 use tokio::sync::oneshot;
 
@@ -44,18 +42,17 @@ async fn run_server() -> Result<()> {
 async fn run_client() -> Result<()> {
     let addr = json_echo_addr();
     let (tx, rx) = oneshot::channel();
-    let response_tx = Arc::new(Mutex::new(Some(tx)));
 
     let client = TcpClient::connect(addr)
-        .pipeline(move || {
-            let response_tx = response_tx.clone();
-
+        .pipeline_instance(
             pipeline()
                 .codec(LineCodec::new())
                 .inbound(JsonDecode::<Response>::new())
-                .handler(PrintResponse { response_tx })
-                .outbound(JsonEncode::<Request>::new())
-        })
+                .handler(PrintResponse {
+                    response_tx: Some(tx),
+                })
+                .outbound(JsonEncode::<Request>::new()),
+        )
         .run()
         .await?;
 
@@ -76,34 +73,22 @@ fn json_echo_addr() -> String {
 
 struct EchoJson;
 
-impl Handler<Request> for EchoJson {
-    type Write = Response;
-
-    async fn read(&mut self, ctx: &mut Context<Self::Write>, req: Request) -> Result<()> {
-        ctx.write(Response {
-            echoed: req.message,
-        })
-        .await
-    }
+#[handler(EchoJson)]
+async fn echo_json(req: Request) -> Result<Response> {
+    Ok(Response {
+        echoed: req.message,
+    })
 }
 
 struct PrintResponse {
-    response_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+    response_tx: Option<oneshot::Sender<()>>,
 }
 
-impl Handler<Response> for PrintResponse {
-    type Write = Request;
-
-    async fn read(&mut self, _ctx: &mut Context<Self::Write>, res: Response) -> Result<()> {
-        println!("server -> {}", res.echoed);
-        if let Some(tx) = self
-            .response_tx
-            .lock()
-            .expect("response sender lock poisoned")
-            .take()
-        {
-            let _ = tx.send(());
-        }
-        Ok(())
+#[handler(PrintResponse, write = Request)]
+async fn print_response(handler: &mut PrintResponse, res: Response) -> Result<()> {
+    println!("server -> {}", res.echoed);
+    if let Some(tx) = handler.response_tx.take() {
+        let _ = tx.send(());
     }
+    Ok(())
 }

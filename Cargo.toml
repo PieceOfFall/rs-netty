@@ -11,9 +11,14 @@ exclude = [
     "Cargo.toml.orig",
 ]
 
+[workspace]
+members = [".", "rs-netty-macros"]
+exclude = ["benchmarks/rs-netty", "benchmarks/tokio"]
+
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal"] }
 bytes = "1"
+rs-netty-macros = { version = "0.2.0", path = "rs-netty-macros", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 sonic-rs = { version = "0.5.8", optional = true }
 thiserror = "2"
@@ -21,8 +26,9 @@ tracing = "0.1"
 trait-variant = "0.1"
 
 [features]
-default = []
+default = ["macros"]
 json = ["dep:serde", "dep:sonic-rs"]
+macros = ["dep:rs-netty-macros"]
 
 [dev-dependencies]
 trybuild = "1"

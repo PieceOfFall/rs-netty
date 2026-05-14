@@ -1,6 +1,4 @@
-use rs_netty::{
-    codec::LineCodec, pipeline, Context, Flow, Handler, Inbound, Outbound, Result, TcpClient,
-};
+use rs_netty::{codec::LineCodec, handler, pipeline, Flow, Inbound, Outbound, Result, TcpClient};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -55,13 +53,10 @@ impl Inbound<String> for ParseResponse {
 
 struct PrintResponse;
 
-impl Handler<Response> for PrintResponse {
-    type Write = Request;
-
-    async fn read(&mut self, _ctx: &mut Context<Self::Write>, msg: Response) -> Result<()> {
-        println!("tcp typed server -> {}", msg.body);
-        Ok(())
-    }
+#[handler(PrintResponse, write = Request)]
+async fn print_response(msg: Response) -> Result<()> {
+    println!("tcp typed server -> {}", msg.body);
+    Ok(())
 }
 
 struct RenderRequest;

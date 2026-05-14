@@ -61,36 +61,41 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 Build a TCP echo server:
 
 ```rust
-use rs_netty::{codec::LineCodec, pipeline, Context, Handler, Result, TcpServer};
+use rs_netty::{codec::LineCodec, handler, pipeline, Result, TcpServer};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     TcpServer::bind("127.0.0.1:9000")
-        .pipeline(|| pipeline().codec(LineCodec::new()).handler(Echo))
+        .pipeline(|| {
+            pipeline()
+                .codec(LineCodec::new())
+                .handler(Echo)
+        })
         .run()
         .await
 }
 
 struct Echo;
 
-impl Handler<String> for Echo {
-    type Write = String;
-
-    async fn read(&mut self, ctx: &mut Context<Self::Write>, msg: String) -> Result<()> {
-        ctx.write(msg).await
-    }
+#[handler(Echo)]
+async fn echo(msg: String) -> Result<String> {
+    Ok(msg)
 }
 ```
 
 Talk to it with a typed TCP client:
 
 ```rust
-use rs_netty::{codec::LineCodec, pipeline, Context, Handler, Result, TcpClient};
+use rs_netty::{codec::LineCodec, handler, pipeline, Result, TcpClient};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let client = TcpClient::connect("127.0.0.1:9000")
-        .pipeline(|| pipeline().codec(LineCodec::new()).handler(PrintResponse))
+        .pipeline(|| {
+            pipeline()
+                .codec(LineCodec::new())
+                .handler(PrintResponse)
+        })
         .run()
         .await?;
 
@@ -101,13 +106,10 @@ async fn main() -> Result<()> {
 
 struct PrintResponse;
 
-impl Handler<String> for PrintResponse {
-    type Write = String;
-
-    async fn read(&mut self, _ctx: &mut Context<Self::Write>, msg: String) -> Result<()> {
-        println!("server -> {msg}");
-        Ok(())
-    }
+#[handler(PrintResponse, write = String)]
+async fn print_response(msg: String) -> Result<()> {
+    println!("server -> {msg}");
+    Ok(())
 }
 ```
 
@@ -146,27 +148,25 @@ types must be encodable by the selected codec.
 ## UDP Example
 
 ```rust
-use rs_netty::{
-    codec::Utf8DatagramCodec, datagram_pipeline, DatagramContext, DatagramHandler, Result,
-    UdpServer,
-};
+use rs_netty::{codec::Utf8DatagramCodec, datagram_pipeline, handler, Result, UdpServer};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     UdpServer::bind("127.0.0.1:9002")
-        .pipeline(|| datagram_pipeline().codec(Utf8DatagramCodec).handler(UdpEcho))
+        .pipeline(|| {
+            datagram_pipeline()
+                .codec(Utf8DatagramCodec)
+                .handler(UdpEcho)
+        })
         .run()
         .await
 }
 
 struct UdpEcho;
 
-impl DatagramHandler<String> for UdpEcho {
-    type Write = String;
-
-    async fn read(&mut self, ctx: &mut DatagramContext<Self::Write>, msg: String) -> Result<()> {
-        ctx.write(format!("echo: {msg}")).await
-    }
+#[handler(UdpEcho)]
+async fn udp_echo(msg: String) -> Result<String> {
+    Ok(format!("echo: {msg}"))
 }
 ```
 
@@ -200,7 +200,11 @@ impl Life for TraceLife {
 }
 
 TcpServer::bind("127.0.0.1:9000")
-    .pipeline(|| pipeline().codec(LineCodec::new()).handler(MyHandler))
+    .pipeline(|| {
+        pipeline()
+            .codec(LineCodec::new())
+            .handler(MyHandler)
+    })
     .life(TraceLife)
     .run()
     .await
@@ -210,7 +214,11 @@ Servers also support an external shutdown handle:
 
 ```rust
 let server = TcpServer::bind("127.0.0.1:9000")
-    .pipeline(|| pipeline().codec(LineCodec::new()).handler(MyHandler))
+    .pipeline(|| {
+        pipeline()
+            .codec(LineCodec::new())
+            .handler(MyHandler)
+    })
     .start()
     .await?;
 
@@ -223,7 +231,11 @@ TCP servers and clients can enable an optional idle timeout:
 ```rust
 TcpServer::bind("127.0.0.1:9000")
     .idle_timeout(std::time::Duration::from_secs(90))
-    .pipeline(|| pipeline().codec(LineCodec::new()).handler(MyHandler))
+    .pipeline(|| {
+        pipeline()
+            .codec(LineCodec::new())
+            .handler(MyHandler)
+    })
     .run()
     .await
 ```
@@ -236,7 +248,11 @@ TCP connection stats are opt-in:
 ```rust
 TcpServer::bind("127.0.0.1:9000")
     .track_connection_stats()
-    .pipeline(|| pipeline().codec(LineCodec::new()).handler(MyHandler))
+    .pipeline(|| {
+        pipeline()
+            .codec(LineCodec::new())
+            .handler(MyHandler)
+    })
     .run()
     .await
 ```
@@ -285,7 +301,7 @@ Then keep framing and JSON parsing as separate pipeline stages:
 ```rust
 use rs_netty::{
     codec::{JsonDecode, JsonEncode, LineCodec},
-    pipeline, Handler,
+    handler, pipeline,
 };
 
 #[derive(serde::Deserialize)]
@@ -296,6 +312,13 @@ struct Request {
 #[derive(serde::Serialize)]
 struct Response {
     ok: bool,
+}
+
+struct ApiHandler;
+
+#[handler(ApiHandler)]
+async fn handle_api(_req: Request) -> rs_netty::Result<Response> {
+    Ok(Response { ok: true })
 }
 
 let pipeline = pipeline()

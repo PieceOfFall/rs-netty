@@ -1,7 +1,4 @@
-use rs_netty::{
-    codec::Utf8DatagramCodec, datagram_pipeline, DatagramContext, DatagramHandler, Result,
-    UdpServer,
-};
+use rs_netty::{codec::Utf8DatagramCodec, datagram_pipeline, handler, Result, UdpServer};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -17,10 +14,7 @@ async fn main() -> Result<()> {
 
 struct UdpEcho;
 
-impl DatagramHandler<String> for UdpEcho {
-    type Write = String;
-
-    async fn read(&mut self, ctx: &mut DatagramContext<Self::Write>, msg: String) -> Result<()> {
-        ctx.write(format!("echo: {msg}")).await
-    }
+#[handler(UdpEcho)]
+async fn udp_echo(msg: String) -> Result<String> {
+    Ok(format!("echo: {msg}"))
 }

@@ -1,6 +1,4 @@
-use rs_netty::{
-    codec::LineCodec, pipeline, Context, Flow, Handler, Inbound, Outbound, Result, TcpServer,
-};
+use rs_netty::{codec::LineCodec, handler, pipeline, Flow, Inbound, Outbound, Result, TcpServer};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -55,15 +53,11 @@ impl Inbound<String> for ParseRequest {
 
 struct Router;
 
-impl Handler<Request> for Router {
-    type Write = Response;
-
-    async fn read(&mut self, ctx: &mut Context<Self::Write>, req: Request) -> Result<()> {
-        ctx.write(Response {
-            body: format!("response: {}", req.body),
-        })
-        .await
-    }
+#[handler(Router)]
+async fn route(req: Request) -> Result<Response> {
+    Ok(Response {
+        body: format!("response: {}", req.body),
+    })
 }
 
 struct RenderResponse;

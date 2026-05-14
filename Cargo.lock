@@ -305,6 +305,7 @@ name = "rs-netty"
 version = "0.2.0"
 dependencies = [
  "bytes",
+ "rs-netty-macros",
  "serde",
  "sonic-rs",
  "thiserror",
@@ -312,6 +313,15 @@ dependencies = [
  "tracing",
  "trait-variant",
  "trybuild",
+]
+
+[[package]]
+name = "rs-netty-macros"
+version = "0.2.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

@@ -8,24 +8,25 @@
 //! # Quick start
 //!
 //! ```no_run
-//! use rs_netty::{codec::LineCodec, pipeline, Context, Handler, Result, TcpServer};
+//! use rs_netty::{codec::LineCodec, handler, pipeline, Result, TcpServer};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
 //!     TcpServer::bind("127.0.0.1:9000")
-//!         .pipeline(|| pipeline().codec(LineCodec::new()).handler(Echo))
+//!         .pipeline(|| {
+//!             pipeline()
+//!                 .codec(LineCodec::new())
+//!                 .handler(Echo)
+//!         })
 //!         .run()
 //!         .await
 //! }
 //!
 //! struct Echo;
 //!
-//! impl Handler<String> for Echo {
-//!     type Write = String;
-//!
-//!     async fn read(&mut self, ctx: &mut Context<Self::Write>, msg: String) -> Result<()> {
-//!         ctx.write(msg).await
-//!     }
+//! #[handler(Echo)]
+//! async fn echo(msg: String) -> Result<String> {
+//!     Ok(msg)
 //! }
 //! ```
 //!
@@ -75,6 +76,8 @@ pub use error::{Error, Result};
 pub use life::{CloseReason, Life, NoLife};
 pub use pipeline::builder::pipeline;
 pub use pipeline::datagram::builder::datagram_pipeline;
+#[cfg(feature = "macros")]
+pub use rs_netty_macros::handler;
 pub use traits::{Business, DatagramHandler, Flow, Handler, Inbound, Outbound};
 pub use transport::tcp::client::{TcpClient, TcpClientHandle};
 pub use transport::tcp::server::TcpServer;

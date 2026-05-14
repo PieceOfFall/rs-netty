@@ -1,6 +1,6 @@
 use rs_netty::{
-    codec::Utf8DatagramCodec, datagram_pipeline, DatagramContext, DatagramHandler, Flow, Inbound,
-    Outbound, Result, UdpServer,
+    codec::Utf8DatagramCodec, datagram_pipeline, handler, Flow, Inbound, Outbound, Result,
+    UdpServer,
 };
 
 #[tokio::main]
@@ -51,12 +51,9 @@ impl Inbound<String> for ParseRequest {
 
 struct Route;
 
-impl DatagramHandler<Request> for Route {
-    type Write = Response;
-
-    async fn read(&mut self, ctx: &mut DatagramContext<Self::Write>, req: Request) -> Result<()> {
-        ctx.write(Response(format!("response: {}", req.0))).await
-    }
+#[handler(Route)]
+async fn route(req: Request) -> Result<Response> {
+    Ok(Response(format!("response: {}", req.0)))
 }
 
 struct RenderResponse;

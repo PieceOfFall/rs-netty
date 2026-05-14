@@ -1,0 +1,16 @@
+[package]
+name = "rs-netty-macros"
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+description = "Proc macros for rs-netty."
+repository = "https://github.com/PieceOfFall/rs-netty"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }

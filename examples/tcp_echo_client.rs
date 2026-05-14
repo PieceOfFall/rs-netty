@@ -1,9 +1,12 @@
-use rs_netty::{codec::LineCodec, pipeline, Context, Handler, Result, TcpClient};
+use rs_netty::{codec::LineCodec, handler, pipeline, Result, TcpClient};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let client = TcpClient::connect("127.0.0.1:9000")
-        .pipeline(|| pipeline().codec(LineCodec::new()).handler(PrintResponse))
+        .pipeline(|| {
+            let pipeline = pipeline().codec(LineCodec::new()).handler(PrintResponse);
+            pipeline
+        })
         .run()
         .await?;
 
@@ -16,11 +19,8 @@ async fn main() -> Result<()> {
 
 struct PrintResponse;
 
-impl Handler<String> for PrintResponse {
-    type Write = String;
-
-    async fn read(&mut self, _ctx: &mut Context<Self::Write>, msg: String) -> Result<()> {
-        println!("server -> {msg}");
-        Ok(())
-    }
+#[handler(PrintResponse, write = String)]
+async fn print_response(msg: String) -> Result<()> {
+    println!("server -> {msg}");
+    Ok(())
 }

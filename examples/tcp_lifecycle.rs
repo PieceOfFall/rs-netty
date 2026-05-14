@@ -1,13 +1,16 @@
 use std::net::SocketAddr;
 
 use rs_netty::{
-    codec::LineCodec, pipeline, CloseReason, ConnInfo, Context, Handler, Life, Result, TcpServer,
+    codec::LineCodec, handler, pipeline, CloseReason, ConnInfo, Life, Result, TcpServer,
 };
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let server = TcpServer::bind("127.0.0.1:9003")
-        .pipeline(|| pipeline().codec(LineCodec::new()).handler(Echo))
+        .pipeline(|| {
+            let pipeline = pipeline().codec(LineCodec::new()).handler(Echo);
+            pipeline
+        })
         .life(PrintLife)
         .start()
         .await?;
@@ -56,10 +59,7 @@ impl Life for PrintLife {
 
 struct Echo;
 
-impl Handler<String> for Echo {
-    type Write = String;
-
-    async fn read(&mut self, ctx: &mut Context<Self::Write>, msg: String) -> Result<()> {
-        ctx.write(format!("echo: {msg}")).await
-    }
+#[handler(Echo)]
+async fn echo(msg: String) -> Result<String> {
+    Ok(format!("echo: {msg}"))
 }
