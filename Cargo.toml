@@ -37,6 +37,13 @@ websocket = ["dep:base64", "dep:sha1"]
 trybuild = "1"
 
 [[example]]
+name = "http_server"
+
+[[example]]
+name = "http_websocket_server"
+required-features = ["websocket"]
+
+[[example]]
 name = "tcp_echo_client"
 required-features = ["macros"]
 
@@ -75,3 +82,7 @@ required-features = ["macros"]
 [[example]]
 name = "udp_typed_chain_client"
 required-features = ["macros"]
+
+[[example]]
+name = "websocket_server"
+required-features = ["websocket"]

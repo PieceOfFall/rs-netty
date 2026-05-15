@@ -3,7 +3,15 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use sha1::{Digest, Sha1};
 
 use crate::{
-    codec::{Decoder, Encoder},
+    codec::{
+        http::{
+            decode_http_request, encode_http_response, find_http_header_end, header,
+            HttpDecodeOptions, HttpRequest, HttpResponse,
+        },
+        Decoder, Encoder,
+    },
+    context::Context,
+    traits::Handler,
     Error, Result,
 };
 
@@ -61,6 +69,87 @@ pub struct WebSocketCodec {
     max_http_header_len: usize,
     max_frame_len: usize,
     require_masked_client_frames: bool,
+}
+
+/// Combined HTTP/1.1 and WebSocket server codec for sharing one TCP port.
+///
+/// The codec starts by decoding HTTP/1.1 requests. Normal requests are emitted
+/// as [`HttpWsInbound::Http`]. Requests with a valid WebSocket upgrade are
+/// emitted as [`HttpWsInbound::WebSocketHandshake`], and the codec then decodes
+/// WebSocket frames for the rest of the connection.
+pub struct HttpWsCodec {
+    state: HttpWsState,
+    max_http_header_len: usize,
+    max_http_body_len: usize,
+    allow_http_chunked: bool,
+    preserve_http_trailers: bool,
+    max_frame_len: usize,
+    require_masked_client_frames: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HttpWsState {
+    Http,
+    WebSocket,
+}
+
+impl HttpWsCodec {
+    /// Creates a server-side HTTP/WebSocket codec.
+    pub fn server() -> Self {
+        Self {
+            state: HttpWsState::Http,
+            max_http_header_len: DEFAULT_MAX_HTTP_HEADER_LEN,
+            max_http_body_len: DEFAULT_MAX_HTTP_HEADER_LEN,
+            allow_http_chunked: false,
+            preserve_http_trailers: false,
+            max_frame_len: DEFAULT_MAX_FRAME_LEN,
+            require_masked_client_frames: true,
+        }
+    }
+
+    /// Sets the maximum HTTP request header size.
+    pub fn max_http_header_len(mut self, value: usize) -> Self {
+        self.max_http_header_len = value;
+        self
+    }
+
+    /// Sets the maximum HTTP request body size accepted by the simple parser.
+    pub fn max_http_body_len(mut self, value: usize) -> Self {
+        self.max_http_body_len = value;
+        self
+    }
+
+    /// Enables or disables decoding `Transfer-Encoding: chunked` HTTP requests.
+    ///
+    /// This only applies before a connection upgrades to WebSocket.
+    pub fn allow_http_chunked(mut self, value: bool) -> Self {
+        self.allow_http_chunked = value;
+        self
+    }
+
+    /// Preserves chunked HTTP request trailer fields before WebSocket upgrade.
+    pub fn preserve_http_trailers(mut self, value: bool) -> Self {
+        self.preserve_http_trailers = value;
+        self
+    }
+
+    /// Sets the maximum WebSocket payload size accepted after upgrade.
+    pub fn max_frame_len(mut self, value: usize) -> Self {
+        self.max_frame_len = value;
+        self
+    }
+
+    /// Controls whether decoded WebSocket client frames must be masked.
+    pub fn require_masked_client_frames(mut self, value: bool) -> Self {
+        self.require_masked_client_frames = value;
+        self
+    }
+}
+
+impl Default for HttpWsCodec {
+    fn default() -> Self {
+        Self::server()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -143,6 +232,69 @@ impl Encoder<WebSocketMessage> for WebSocketCodec {
     }
 }
 
+impl Decoder for HttpWsCodec {
+    type Item = HttpWsInbound;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
+        match self.state {
+            HttpWsState::Http => self.decode_http(src),
+            HttpWsState::WebSocket => {
+                decode_websocket_frame(src, self.max_frame_len, self.require_masked_client_frames)
+                    .map(|msg| msg.map(HttpWsInbound::WebSocket))
+            }
+        }
+    }
+}
+
+impl Encoder<HttpWsOutbound> for HttpWsCodec {
+    fn encode(&mut self, item: HttpWsOutbound, dst: &mut BytesMut) -> Result<()> {
+        match (self.state, item) {
+            (HttpWsState::Http, HttpWsOutbound::Http(response)) => {
+                encode_http_response(response, dst)
+            }
+            (HttpWsState::Http, HttpWsOutbound::WebSocketHandshake(response)) => {
+                encode_handshake_response(response, dst);
+                self.state = HttpWsState::WebSocket;
+                Ok(())
+            }
+            (HttpWsState::Http, HttpWsOutbound::WebSocket(_)) => Err(Error::Encode(
+                "cannot write websocket frame before handshake response".to_string(),
+            )),
+            (HttpWsState::WebSocket, HttpWsOutbound::WebSocket(message)) => {
+                encode_websocket_outbound(message.into(), dst)
+            }
+            (HttpWsState::WebSocket, HttpWsOutbound::Http(_))
+            | (HttpWsState::WebSocket, HttpWsOutbound::WebSocketHandshake(_)) => Err(
+                Error::Encode("cannot write HTTP response after websocket upgrade".to_string()),
+            ),
+        }
+    }
+}
+
+impl HttpWsCodec {
+    fn decode_http(&mut self, src: &mut BytesMut) -> Result<Option<HttpWsInbound>> {
+        let Some(request) = decode_http_request(
+            src,
+            HttpDecodeOptions {
+                max_header_len: self.max_http_header_len,
+                max_body_len: self.max_http_body_len,
+                allow_chunked: self.allow_http_chunked,
+                preserve_trailers: self.preserve_http_trailers,
+            },
+        )?
+        else {
+            return Ok(None);
+        };
+
+        if request.is_websocket_upgrade() {
+            let handshake = WebSocketHandshake::try_from(&request)?;
+            Ok(Some(HttpWsInbound::WebSocketHandshake(handshake)))
+        } else {
+            Ok(Some(HttpWsInbound::Http(request)))
+        }
+    }
+}
+
 impl WebSocketCodec {
     fn decode_handshake(&mut self, src: &mut BytesMut) -> Result<Option<WebSocketInbound>> {
         let Some(end) = find_http_header_end(src) else {
@@ -172,83 +324,8 @@ impl WebSocketCodec {
     }
 
     fn decode_frame(&mut self, src: &mut BytesMut) -> Result<Option<WebSocketInbound>> {
-        if src.len() < 2 {
-            return Ok(None);
-        }
-
-        let first = src[0];
-        let second = src[1];
-        let fin = first & 0x80 != 0;
-        let rsv = first & 0x70;
-        let opcode = first & 0x0f;
-        let masked = second & 0x80 != 0;
-        let mut payload_len = u64::from(second & 0x7f);
-        let mut header_len = 2usize;
-        let encoded_len_kind = payload_len;
-
-        if payload_len == 126 {
-            if src.len() < header_len + 2 {
-                return Ok(None);
-            }
-            payload_len = u64::from(u16::from_be_bytes([src[2], src[3]]));
-            header_len += 2;
-        } else if payload_len == 127 {
-            if src.len() < header_len + 8 {
-                return Ok(None);
-            }
-            payload_len = u64::from_be_bytes([
-                src[2], src[3], src[4], src[5], src[6], src[7], src[8], src[9],
-            ]);
-            header_len += 8;
-        }
-
-        validate_payload_len_encoding(encoded_len_kind, payload_len)?;
-
-        let payload_len = usize::try_from(payload_len)
-            .map_err(|err| Error::Decode(format!("websocket payload length overflow: {err}")))?;
-        if payload_len > self.max_frame_len {
-            return Err(Error::FrameTooLarge {
-                current: payload_len,
-                max: self.max_frame_len,
-            });
-        }
-
-        let mask_len = if masked { 4 } else { 0 };
-        let frame_len = header_len
-            .checked_add(mask_len)
-            .and_then(|len| len.checked_add(payload_len))
-            .ok_or_else(|| Error::Decode("websocket frame length overflow".to_string()))?;
-        if src.len() < frame_len {
-            return Ok(None);
-        }
-
-        validate_frame_header(
-            fin,
-            rsv,
-            opcode,
-            masked,
-            payload_len,
-            self.require_masked_client_frames,
-        )?;
-
-        let mut frame = src.split_to(frame_len);
-        frame.advance(header_len);
-        let mask = if masked {
-            let mask = [frame[0], frame[1], frame[2], frame[3]];
-            frame.advance(4);
-            Some(mask)
-        } else {
-            None
-        };
-
-        let mut payload = frame.split_to(payload_len);
-        if let Some(mask) = mask {
-            for (index, byte) in payload.iter_mut().enumerate() {
-                *byte ^= mask[index % 4];
-            }
-        }
-
-        decode_payload(opcode, payload.freeze())
+        decode_websocket_frame(src, self.max_frame_len, self.require_masked_client_frames)
+            .map(|msg| msg.map(WebSocketInbound::from))
     }
 }
 
@@ -301,7 +378,104 @@ pub enum WebSocketMessage {
     Pong(Bytes),
 }
 
+/// Inbound messages decoded by [`HttpWsCodec`].
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum HttpWsInbound {
+    /// A regular HTTP/1.1 request.
+    Http(HttpRequest),
+    /// A valid WebSocket upgrade request.
+    WebSocketHandshake(WebSocketHandshake),
+    /// A WebSocket message after the opening handshake.
+    WebSocket(WebSocketMessage),
+}
+
+/// Outbound messages encoded by [`HttpWsCodec`].
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum HttpWsOutbound {
+    /// A regular HTTP/1.1 response.
+    Http(HttpResponse),
+    /// A WebSocket 101 Switching Protocols response.
+    WebSocketHandshake(WebSocketHandshakeResponse),
+    /// A WebSocket message after the opening handshake.
+    WebSocket(WebSocketMessage),
+}
+
+#[trait_variant::make(HttpService: Send)]
+/// Static HTTP service used by [`HttpWsRouter`].
+pub trait LocalHttpService: 'static {
+    /// Handles one HTTP request.
+    async fn call(&mut self, request: HttpRequest) -> Result<HttpResponse>;
+}
+
+#[trait_variant::make(WebSocketService: Send)]
+/// Static WebSocket service used by [`HttpWsRouter`].
+pub trait LocalWebSocketService: 'static {
+    /// Handles a WebSocket opening handshake.
+    async fn open(&mut self, handshake: WebSocketHandshake) -> Result<WebSocketHandshakeResponse>;
+
+    /// Handles one WebSocket message after the opening handshake.
+    async fn message(&mut self, message: WebSocketMessage) -> Result<Option<WebSocketMessage>>;
+}
+
+/// Static router that lets an HTTP service and WebSocket service share a port.
+pub struct HttpWsRouter<H, W> {
+    http: H,
+    websocket: W,
+}
+
+impl<H, W> HttpWsRouter<H, W> {
+    /// Creates a static HTTP/WebSocket router.
+    pub fn new(http: H, websocket: W) -> Self {
+        Self { http, websocket }
+    }
+
+    /// Returns the inner services.
+    pub fn into_inner(self) -> (H, W) {
+        (self.http, self.websocket)
+    }
+}
+
+impl<H, W> Handler<HttpWsInbound> for HttpWsRouter<H, W>
+where
+    H: HttpService,
+    W: WebSocketService,
+{
+    type Write = HttpWsOutbound;
+
+    async fn read(&mut self, ctx: &mut Context<Self::Write>, msg: HttpWsInbound) -> Result<()> {
+        match msg {
+            HttpWsInbound::Http(request) => {
+                let response = self.http.call(request).await?;
+                ctx.write(HttpWsOutbound::Http(response)).await
+            }
+            HttpWsInbound::WebSocketHandshake(handshake) => {
+                let response = self.websocket.open(handshake).await?;
+                ctx.write(HttpWsOutbound::WebSocketHandshake(response))
+                    .await
+            }
+            HttpWsInbound::WebSocket(message) => {
+                if let Some(response) = self.websocket.message(message).await? {
+                    ctx.write(HttpWsOutbound::WebSocket(response)).await?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
 impl From<WebSocketMessage> for WebSocketOutbound {
+    fn from(value: WebSocketMessage) -> Self {
+        match value {
+            WebSocketMessage::Text(text) => Self::Text(text),
+            WebSocketMessage::Binary(bytes) => Self::Binary(bytes),
+            WebSocketMessage::Close(close) => Self::Close(close),
+            WebSocketMessage::Ping(bytes) => Self::Ping(bytes),
+            WebSocketMessage::Pong(bytes) => Self::Pong(bytes),
+        }
+    }
+}
+
+impl From<WebSocketMessage> for WebSocketInbound {
     fn from(value: WebSocketMessage) -> Self {
         match value {
             WebSocketMessage::Text(text) => Self::Text(text),
@@ -316,6 +490,24 @@ impl From<WebSocketMessage> for WebSocketOutbound {
 impl From<WebSocketHandshakeResponse> for WebSocketOutbound {
     fn from(value: WebSocketHandshakeResponse) -> Self {
         Self::HandshakeResponse(value)
+    }
+}
+
+impl From<HttpResponse> for HttpWsOutbound {
+    fn from(value: HttpResponse) -> Self {
+        Self::Http(value)
+    }
+}
+
+impl From<WebSocketHandshakeResponse> for HttpWsOutbound {
+    fn from(value: WebSocketHandshakeResponse) -> Self {
+        Self::WebSocketHandshake(value)
+    }
+}
+
+impl From<WebSocketMessage> for HttpWsOutbound {
+    fn from(value: WebSocketMessage) -> Self {
+        Self::WebSocket(value)
     }
 }
 
@@ -352,6 +544,36 @@ impl WebSocketHandshake {
             accept_key: websocket_accept_key(&self.key),
             headers: Vec::new(),
         }
+    }
+}
+
+impl TryFrom<&HttpRequest> for WebSocketHandshake {
+    type Error = Error;
+
+    fn try_from(request: &HttpRequest) -> std::result::Result<Self, Self::Error> {
+        if !request.method.eq_ignore_ascii_case("GET")
+            || request.target.is_empty()
+            || !request.version.starts_with("HTTP/1.1")
+        {
+            return Err(Error::Decode(
+                "invalid websocket HTTP upgrade request line".to_string(),
+            ));
+        }
+
+        require_header_value(&request.headers, "Upgrade", "websocket")?;
+        require_connection_upgrade(&request.headers)?;
+        require_header_value(&request.headers, "Sec-WebSocket-Version", "13")?;
+        let key = request
+            .header("Sec-WebSocket-Key")
+            .ok_or_else(|| Error::Decode("missing Sec-WebSocket-Key".to_string()))?
+            .to_string();
+        validate_client_key(&key)?;
+
+        Ok(WebSocketHandshake {
+            path: request.target.clone(),
+            key,
+            headers: request.headers.clone(),
+        })
     }
 }
 
@@ -449,17 +671,6 @@ fn require_connection_upgrade(headers: &[(String, String)]) -> Result<()> {
     Err(Error::Decode("invalid Connection header".to_string()))
 }
 
-fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
-    headers
-        .iter()
-        .find(|(header, _)| header.eq_ignore_ascii_case(name))
-        .map(|(_, value)| value.as_str())
-}
-
-fn find_http_header_end(src: &BytesMut) -> Option<usize> {
-    src.windows(4).position(|window| window == b"\r\n\r\n")
-}
-
 fn websocket_accept_key(key: &str) -> String {
     let mut sha1 = Sha1::new();
     sha1.update(key.as_bytes());
@@ -495,6 +706,104 @@ fn encode_handshake_response(response: WebSocketHandshakeResponse, dst: &mut Byt
         dst.extend_from_slice(b"\r\n");
     }
     dst.extend_from_slice(b"\r\n");
+}
+
+fn decode_websocket_frame(
+    src: &mut BytesMut,
+    max_frame_len: usize,
+    require_masked_client_frames: bool,
+) -> Result<Option<WebSocketMessage>> {
+    if src.len() < 2 {
+        return Ok(None);
+    }
+
+    let first = src[0];
+    let second = src[1];
+    let fin = first & 0x80 != 0;
+    let rsv = first & 0x70;
+    let opcode = first & 0x0f;
+    let masked = second & 0x80 != 0;
+    let mut payload_len = u64::from(second & 0x7f);
+    let mut header_len = 2usize;
+    let encoded_len_kind = payload_len;
+
+    if payload_len == 126 {
+        if src.len() < header_len + 2 {
+            return Ok(None);
+        }
+        payload_len = u64::from(u16::from_be_bytes([src[2], src[3]]));
+        header_len += 2;
+    } else if payload_len == 127 {
+        if src.len() < header_len + 8 {
+            return Ok(None);
+        }
+        payload_len = u64::from_be_bytes([
+            src[2], src[3], src[4], src[5], src[6], src[7], src[8], src[9],
+        ]);
+        header_len += 8;
+    }
+
+    validate_payload_len_encoding(encoded_len_kind, payload_len)?;
+
+    let payload_len = usize::try_from(payload_len)
+        .map_err(|err| Error::Decode(format!("websocket payload length overflow: {err}")))?;
+    if payload_len > max_frame_len {
+        return Err(Error::FrameTooLarge {
+            current: payload_len,
+            max: max_frame_len,
+        });
+    }
+
+    let mask_len = if masked { 4 } else { 0 };
+    let frame_len = header_len
+        .checked_add(mask_len)
+        .and_then(|len| len.checked_add(payload_len))
+        .ok_or_else(|| Error::Decode("websocket frame length overflow".to_string()))?;
+    if src.len() < frame_len {
+        return Ok(None);
+    }
+
+    validate_frame_header(
+        fin,
+        rsv,
+        opcode,
+        masked,
+        payload_len,
+        require_masked_client_frames,
+    )?;
+
+    let mut frame = src.split_to(frame_len);
+    frame.advance(header_len);
+    let mask = if masked {
+        let mask = [frame[0], frame[1], frame[2], frame[3]];
+        frame.advance(4);
+        Some(mask)
+    } else {
+        None
+    };
+
+    let mut payload = frame.split_to(payload_len);
+    if let Some(mask) = mask {
+        for (index, byte) in payload.iter_mut().enumerate() {
+            *byte ^= mask[index % 4];
+        }
+    }
+
+    decode_payload(opcode, payload.freeze())
+}
+
+fn encode_websocket_outbound(item: WebSocketOutbound, dst: &mut BytesMut) -> Result<()> {
+    match item {
+        WebSocketOutbound::HandshakeResponse(response) => {
+            encode_handshake_response(response, dst);
+            Ok(())
+        }
+        WebSocketOutbound::Text(text) => encode_frame(0x1, text.into_bytes().into(), dst),
+        WebSocketOutbound::Binary(bytes) => encode_frame(0x2, bytes, dst),
+        WebSocketOutbound::Close(close) => encode_close(close, dst),
+        WebSocketOutbound::Ping(bytes) => encode_control_frame(0x9, bytes, dst),
+        WebSocketOutbound::Pong(bytes) => encode_control_frame(0xA, bytes, dst),
+    }
 }
 
 fn validate_frame_header(
@@ -554,17 +863,17 @@ fn validate_payload_len_encoding(encoded_len_kind: u64, payload_len: u64) -> Res
     }
 }
 
-fn decode_payload(opcode: u8, payload: Bytes) -> Result<Option<WebSocketInbound>> {
+fn decode_payload(opcode: u8, payload: Bytes) -> Result<Option<WebSocketMessage>> {
     match opcode {
         0x1 => {
             let text = String::from_utf8(payload.to_vec())
                 .map_err(|err| Error::Decode(format!("invalid websocket text frame: {err}")))?;
-            Ok(Some(WebSocketInbound::Text(text)))
+            Ok(Some(WebSocketMessage::Text(text)))
         }
-        0x2 => Ok(Some(WebSocketInbound::Binary(payload))),
-        0x8 => Ok(Some(WebSocketInbound::Close(decode_close(payload)?))),
-        0x9 => Ok(Some(WebSocketInbound::Ping(payload))),
-        0xA => Ok(Some(WebSocketInbound::Pong(payload))),
+        0x2 => Ok(Some(WebSocketMessage::Binary(payload))),
+        0x8 => Ok(Some(WebSocketMessage::Close(decode_close(payload)?))),
+        0x9 => Ok(Some(WebSocketMessage::Ping(payload))),
+        0xA => Ok(Some(WebSocketMessage::Pong(payload))),
         _ => Err(Error::Decode(format!(
             "unsupported websocket opcode: {opcode}"
         ))),
@@ -787,5 +1096,68 @@ Sec-WebSocket-Version: 13\r\n\
             ),
             Err(Error::Encode(_))
         ));
+    }
+
+    #[test]
+    fn http_ws_codec_decodes_regular_http_request_and_encodes_response() {
+        let mut codec = HttpWsCodec::server();
+        let mut buf = BytesMut::from(
+            &b"POST /hello HTTP/1.1\r\n\
+Host: example.com\r\n\
+Content-Length: 5\r\n\
+\r\n\
+world"[..],
+        );
+
+        let msg = codec.decode(&mut buf).expect("decode").expect("request");
+        let HttpWsInbound::Http(request) = msg else {
+            panic!("expected http request");
+        };
+        assert_eq!(request.method(), "POST");
+        assert_eq!(request.target(), "/hello");
+        assert_eq!(request.header("host"), Some("example.com"));
+        assert_eq!(request.body(), &Bytes::from_static(b"world"));
+
+        let mut out = BytesMut::new();
+        codec
+            .encode(
+                HttpResponse::new(200)
+                    .header("Content-Type", "text/plain")
+                    .body(Bytes::from_static(b"ok"))
+                    .into(),
+                &mut out,
+            )
+            .expect("encode");
+        assert_eq!(
+            std::str::from_utf8(&out).expect("response"),
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nok"
+        );
+    }
+
+    #[test]
+    fn http_ws_codec_upgrades_then_decodes_websocket_frames() {
+        let mut codec = HttpWsCodec::server().require_masked_client_frames(false);
+        let mut buf = BytesMut::from(HANDSHAKE);
+
+        let msg = codec.decode(&mut buf).expect("decode").expect("handshake");
+        let HttpWsInbound::WebSocketHandshake(handshake) = msg else {
+            panic!("expected websocket handshake");
+        };
+
+        let mut out = BytesMut::new();
+        codec
+            .encode(HttpWsOutbound::from(handshake.accept_response()), &mut out)
+            .expect("encode handshake");
+        assert!(std::str::from_utf8(&out)
+            .expect("response")
+            .contains("HTTP/1.1 101 Switching Protocols\r\n"));
+
+        buf.extend_from_slice(&[0x81, 0x02, b'h', b'i']);
+        assert_eq!(
+            codec.decode(&mut buf).expect("decode frame"),
+            Some(HttpWsInbound::WebSocket(WebSocketMessage::Text(
+                "hi".to_string()
+            )))
+        );
     }
 }

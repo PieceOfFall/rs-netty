@@ -6,6 +6,7 @@ pub mod byte_array;
 pub mod bytes_datagram;
 pub mod delimiter_based_frame;
 pub mod fixed_length_frame;
+pub mod http;
 #[cfg(feature = "json")]
 pub mod json;
 pub mod length_field_based_frame;
@@ -19,6 +20,7 @@ pub use byte_array::{ByteArrayDecoder, ByteArrayEncoder};
 pub use bytes_datagram::BytesDatagramCodec;
 pub use delimiter_based_frame::DelimiterBasedFrameDecoder;
 pub use fixed_length_frame::FixedLengthFrameDecoder;
+pub use http::{HttpCodec, HttpRequest, HttpResponse};
 #[cfg(feature = "json")]
 pub use json::{JsonDecode, JsonEncode};
 pub use length_field_based_frame::{ByteOrder, LengthFieldBasedFrameDecoder, LengthFieldPrepender};
@@ -31,8 +33,9 @@ pub use mqtt::{
 pub use utf8_datagram::Utf8DatagramCodec;
 #[cfg(feature = "websocket")]
 pub use websocket::{
-    WebSocketClose, WebSocketCodec, WebSocketHandshake, WebSocketHandshakeResponse,
-    WebSocketInbound, WebSocketMessage, WebSocketOutbound,
+    HttpService, HttpWsCodec, HttpWsInbound, HttpWsOutbound, HttpWsRouter, WebSocketClose,
+    WebSocketCodec, WebSocketHandshake, WebSocketHandshakeResponse, WebSocketInbound,
+    WebSocketMessage, WebSocketOutbound, WebSocketService,
 };
 
 /// Decoder for byte-stream transports such as TCP.

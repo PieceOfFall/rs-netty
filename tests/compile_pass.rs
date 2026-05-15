@@ -10,7 +10,11 @@ fn compile_pass() {
     t.pass("tests/ui/pass_udp_typed_chain.rs");
     t.pass("tests/ui/pass_life.rs");
     t.pass("tests/ui/pass_client_server_modules.rs");
+    t.pass("tests/ui/pass_http_codec.rs");
 
     #[cfg(feature = "macros")]
     t.pass("tests/ui/pass_tcp_handler_macro.rs");
+
+    #[cfg(feature = "websocket")]
+    t.pass("tests/ui/pass_http_ws_router.rs");
 }
