@@ -52,7 +52,15 @@ where
     let mut read_buf = vec![0_u8; read_buffer_capacity];
     let mut write_buf = BytesMut::with_capacity(config.write_buffer_capacity);
 
-    life.udp_socket_started(local_addr).await?;
+    if let Err(err) = life.udp_socket_started(local_addr).await {
+        tracing::warn!(
+            socket_id = id,
+            local_addr = %local_addr,
+            error = ?err,
+            "udp socket start life hook failed"
+        );
+        return Err(err);
+    }
 
     let result: Result<()> = async {
         loop {
@@ -62,23 +70,57 @@ where
 
             tokio::select! {
                 read = socket.recv_from(&mut read_buf) => {
-                    let (read_len, peer_addr) = read?;
+                    let (read_len, peer_addr) = match read {
+                        Ok(read) => read,
+                        Err(err) => {
+                            tracing::warn!(
+                                socket_id = id,
+                                local_addr = %local_addr,
+                                stage = "recv_from",
+                                error = ?err,
+                                "udp socket runtime error"
+                            );
+                            return Err(err.into());
+                        }
+                    };
 
                     if read_len > config.max_datagram_size {
-                        return Err(Error::DatagramTooLarge {
+                        let err = Error::DatagramTooLarge {
                             current: read_len,
                             max: config.max_datagram_size,
-                        });
+                        };
+                        tracing::warn!(
+                            socket_id = id,
+                            local_addr = %local_addr,
+                            peer_addr = %peer_addr,
+                            stage = "datagram_size_check",
+                            error = ?err,
+                            "udp socket runtime error"
+                        );
+                        return Err(err);
                     }
 
-                    let msg = pipeline.decode_datagram(&read_buf[..read_len])?;
+                    let msg = match pipeline.decode_datagram(&read_buf[..read_len]) {
+                        Ok(msg) => msg,
+                        Err(err) => {
+                            tracing::warn!(
+                                socket_id = id,
+                                local_addr = %local_addr,
+                                peer_addr = %peer_addr,
+                                stage = "decode_datagram",
+                                error = ?err,
+                                "udp socket runtime error"
+                            );
+                            return Err(err);
+                        }
+                    };
                     let info = DatagramInfo::new(id, peer_addr, local_addr);
                     let mut inbound_ctx = InboundContext::new_datagram(info);
                     let mut business_ctx = BusinessContext::new_datagram(info);
                     let mut ctx = DatagramContext::new(info, channel.clone());
                     let mut outbound_ctx = OutboundContext::new_datagram(info);
 
-                    pipeline
+                    if let Err(err) = pipeline
                         .process_inbound_flushable(
                             &mut inbound_ctx,
                             &mut business_ctx,
@@ -88,7 +130,18 @@ where
                             &mut write_buf,
                             msg,
                         )
-                        .await?;
+                        .await
+                    {
+                        tracing::warn!(
+                            socket_id = id,
+                            local_addr = %local_addr,
+                            peer_addr = %peer_addr,
+                            stage = "inbound_pipeline",
+                            error = ?err,
+                            "udp socket runtime error"
+                        );
+                        return Err(err);
+                    }
 
                     if ctx.close_requested() {
                         return Ok(());
@@ -101,21 +154,64 @@ where
                             let info = DatagramInfo::new(id, peer_addr, local_addr);
                             let mut outbound_ctx = OutboundContext::new_datagram(info);
 
-                            pipeline
+                            if let Err(err) = pipeline
                                 .process_outbound(&mut outbound_ctx, msg, &mut write_buf)
-                                .await?;
+                                .await
+                            {
+                                tracing::warn!(
+                                    socket_id = id,
+                                    local_addr = %local_addr,
+                                    peer_addr = %peer_addr,
+                                    stage = "outbound_pipeline",
+                                    error = ?err,
+                                    "udp socket runtime error"
+                                );
+                                return Err(err);
+                            }
 
-                            flush_datagram(&socket, peer_addr, &mut write_buf).await?;
+                            if let Err(err) = flush_datagram(&socket, peer_addr, &mut write_buf).await {
+                                tracing::warn!(
+                                    socket_id = id,
+                                    local_addr = %local_addr,
+                                    peer_addr = %peer_addr,
+                                    stage = "flush_datagram",
+                                    error = ?err,
+                                    "udp socket runtime error"
+                                );
+                                return Err(err);
+                            }
                         }
                         Some(DatagramCommand::WriteToAndFlush(peer_addr, msg, done)) => {
                             let info = DatagramInfo::new(id, peer_addr, local_addr);
                             let mut outbound_ctx = OutboundContext::new_datagram(info);
 
                             let result = async {
-                                pipeline
+                                if let Err(err) = pipeline
                                     .process_outbound(&mut outbound_ctx, msg, &mut write_buf)
-                                    .await?;
-                                flush_datagram(&socket, peer_addr, &mut write_buf).await
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        socket_id = id,
+                                        local_addr = %local_addr,
+                                        peer_addr = %peer_addr,
+                                        stage = "outbound_pipeline",
+                                        error = ?err,
+                                        "udp socket runtime error"
+                                    );
+                                    return Err(err);
+                                }
+                                if let Err(err) = flush_datagram(&socket, peer_addr, &mut write_buf).await {
+                                    tracing::warn!(
+                                        socket_id = id,
+                                        local_addr = %local_addr,
+                                        peer_addr = %peer_addr,
+                                        stage = "flush_datagram",
+                                        error = ?err,
+                                        "udp socket runtime error"
+                                    );
+                                    return Err(err);
+                                }
+                                Ok(())
                             }
                             .await;
 
@@ -145,8 +241,22 @@ where
     .await;
 
     match result {
-        Ok(()) => life.udp_socket_stopped(local_addr).await,
+        Ok(()) => {
+            tracing::debug!(
+                socket_id = id,
+                local_addr = %local_addr,
+                "udp socket stopped"
+            );
+            life.udp_socket_stopped(local_addr).await
+        }
         Err(err) => {
+            tracing::warn!(
+                socket_id = id,
+                local_addr = %local_addr,
+                error = ?err,
+                "udp socket stopped with error"
+            );
+
             if let Err(life_err) = life.udp_socket_stopped(local_addr).await {
                 tracing::debug!(
                     local_addr = %local_addr,

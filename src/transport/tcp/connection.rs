@@ -60,11 +60,38 @@ where
     let local_addr = connection.local_addr;
     let info = ConnInfo::new(id, peer_addr, local_addr);
 
-    life.tcp_connection_opened(info).await?;
+    if let Err(err) = life.tcp_connection_opened(info).await {
+        tracing::warn!(
+            connection_id = id,
+            peer_addr = %peer_addr,
+            local_addr = %local_addr,
+            error = ?err,
+            "tcp connection open life hook failed"
+        );
+        return Err(err);
+    }
 
     match run_stream_connection(connection).await {
-        Ok(reason) => life.tcp_connection_closed(info, reason).await,
+        Ok(reason) => {
+            tracing::debug!(
+                connection_id = id,
+                peer_addr = %peer_addr,
+                local_addr = %local_addr,
+                close_reason = ?reason,
+                "tcp connection closed"
+            );
+            life.tcp_connection_closed(info, reason).await
+        }
         Err(failure) => {
+            tracing::warn!(
+                connection_id = id,
+                peer_addr = %peer_addr,
+                local_addr = %local_addr,
+                close_reason = ?failure.reason,
+                error = ?failure.error,
+                "tcp connection closed with error"
+            );
+
             if let Err(life_err) = life.tcp_connection_closed(info, failure.reason).await {
                 tracing::debug!(
                     connection_id = id,
@@ -210,7 +237,14 @@ where
         &mut self,
         read: std::io::Result<usize>,
     ) -> ConnectionResult<Option<CloseReason>> {
-        let read_len = read.map_err(|err| failure(CloseReason::IoError, err.into()))?;
+        let read_len = match read {
+            Ok(read_len) => read_len,
+            Err(err) => {
+                let failure = failure(CloseReason::IoError, err.into());
+                self.log_failure("read", &failure);
+                return Err(failure);
+            }
+        };
 
         if read_len == 0 {
             return Ok(Some(CloseReason::PeerClosed));
@@ -221,25 +255,34 @@ where
         }
 
         if self.read_buf.len() > self.config.max_frame_size {
-            return Err(failure(
+            let failure = failure(
                 CloseReason::FrameTooLarge,
                 Error::FrameTooLarge {
                     current: self.read_buf.len(),
                     max: self.config.max_frame_size,
                 },
-            ));
+            );
+            self.log_failure("frame_size_check", &failure);
+            return Err(failure);
         }
 
-        while let Some(msg) = self
-            .pipeline
-            .decode(&mut self.read_buf)
-            .map_err(decode_failure)?
-        {
+        loop {
+            let msg = match self.pipeline.decode(&mut self.read_buf) {
+                Ok(Some(msg)) => msg,
+                Ok(None) => break,
+                Err(err) => {
+                    let failure = decode_failure(err);
+                    self.log_failure("decode", &failure);
+                    return Err(failure);
+                }
+            };
+
             if let Some(stats) = &self.stats {
                 stats.add_frame_read();
             }
 
-            self.pipeline
+            if let Err(err) = self
+                .pipeline
                 .process_inbound_flushable(
                     &mut self.inbound_ctx,
                     &mut self.business_ctx,
@@ -251,7 +294,11 @@ where
                     msg,
                 )
                 .await
-                .map_err(handler_failure)?;
+            {
+                let failure = handler_failure(err);
+                self.log_failure("inbound_pipeline", &failure);
+                return Err(failure);
+            }
 
             if self.ctx.close_requested() {
                 return Ok(Some(CloseReason::HandlerClosed));
@@ -267,10 +314,15 @@ where
     ) -> ConnectionResult<Option<CloseReason>> {
         match cmd {
             Some(StreamCommand::Write(msg)) => {
-                self.pipeline
+                if let Err(err) = self
+                    .pipeline
                     .process_outbound(&mut self.outbound_ctx, msg, &mut self.write_buf)
                     .await
-                    .map_err(outbound_failure)?;
+                {
+                    let failure = outbound_failure(err);
+                    self.log_failure("outbound_pipeline", &failure);
+                    return Err(failure);
+                }
                 if let Some(stats) = &self.stats {
                     stats.add_frame_written();
                 }
@@ -280,10 +332,15 @@ where
             }
             Some(StreamCommand::WriteAndFlush(msg, done)) => {
                 let result = async {
-                    self.pipeline
+                    if let Err(err) = self
+                        .pipeline
                         .process_outbound(&mut self.outbound_ctx, msg, &mut self.write_buf)
                         .await
-                        .map_err(outbound_failure)?;
+                    {
+                        let failure = outbound_failure(err);
+                        self.log_failure("outbound_pipeline", &failure);
+                        return Err(failure);
+                    }
                     if let Some(stats) = &self.stats {
                         stats.add_frame_written();
                     }
@@ -311,10 +368,11 @@ where
     async fn flush_write_buf(&mut self) -> ConnectionResult<()> {
         if !self.write_buf.is_empty() {
             let len = self.write_buf.len();
-            self.stream
-                .write_all(&self.write_buf)
-                .await
-                .map_err(|err| failure(CloseReason::IoError, err.into()))?;
+            if let Err(err) = self.stream.write_all(&self.write_buf).await {
+                let failure = failure(CloseReason::IoError, err.into());
+                self.log_failure("flush", &failure);
+                return Err(failure);
+            }
             if let Some(stats) = &self.stats {
                 stats.add_bytes_written(len);
             }
@@ -322,6 +380,20 @@ where
         }
 
         Ok(())
+    }
+
+    fn log_failure(&self, stage: &'static str, failure: &ConnectionFailure) {
+        tracing::warn!(
+            connection_id = self.ctx.id(),
+            peer_addr = %self.ctx.peer_addr(),
+            local_addr = %self.ctx.local_addr(),
+            stage,
+            close_reason = ?failure.reason,
+            error = ?failure.error,
+            read_buffer_len = self.read_buf.len(),
+            write_buffer_len = self.write_buf.len(),
+            "tcp connection runtime error"
+        );
     }
 }
 
